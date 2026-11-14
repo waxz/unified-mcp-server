@@ -43,7 +43,7 @@ from .tmux_commands import (
     build_tmux_reset_pane_command,
     build_tmux_send_keys_command,
 )
-from .execution_policy import resolve_request
+from .execution_policy import resolve_request, validate_tmux_session_name
 from ..common.mcp_types_utils import create_shell_result, create_str_result
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,31 @@ def register_tools(server: FastMCP) -> None:
             raise ValueError(f"{parts}")
         return result
         # return [types.TextContent(type="text", text="\n\n".join(parts))]
+
+    def _tmux_session_target(session_name: str) -> tuple[bool, str]:
+        """Return (is_trusted, cwd) for running tmux commands on a session.
+
+        ``native_mcp_*`` sessions (created by tmux_execute for trusted commands)
+        live on the host. Any other session lives in the sandbox, so it needs
+        one: without it, upstream passed cwd=None and crashed.
+        """
+        settings = config.SETTINGS
+        validate_tmux_session_name(session_name)
+        if session_name.startswith("native_mcp_"):
+            if not settings.IS_TMUX_INSTALLED:
+                raise ValueError("tmux is not installed on the host")
+            return True, settings.DOCKER_SANDBOX_HOST_ROOT or os.getcwd()
+        if settings.IS_IN_DOCKER:
+            # Inside the sandbox container every command runs directly.
+            return False, "."
+        if not settings.DOCKER_SANDBOX_WORKDIR:
+            raise ValueError(
+                f"tmux session '{session_name}' is not a native_mcp_ session, so it is "
+                "treated as a sandbox session, but no sandbox is configured "
+                "([DOCKER_CONFIG.<os>] work_dir). Host sessions are only reachable "
+                "when created by tmux_execute (named native_mcp_<name>)."
+            )
+        return False, settings.DOCKER_SANDBOX_WORKDIR
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def list_trusted_commands()-> dict:
@@ -271,15 +296,7 @@ def register_tools(server: FastMCP) -> None:
     ) -> list[types.TextContent]:
         """Capture tmux pane output; optionally clear after reading."""
 
-        cwd: str = "."
-        is_trusted = session_name.startswith("native_mcp_")
-        if is_trusted and not config.SETTINGS.IS_TMUX_INSTALLED:
-            return [types.TextContent(type="text", text=f"Tmux is not installed")]
-
-        if is_trusted:
-            cwd = config.SETTINGS.DOCKER_SANDBOX_HOST_ROOT
-        else:
-            cwd = config.SETTINGS.DOCKER_SANDBOX_WORKDIR
+        is_trusted, cwd = _tmux_session_target(session_name)
 
         result = [
             create_shell_result(
@@ -347,11 +364,8 @@ def register_tools(server: FastMCP) -> None:
     ) -> list[types.TextContent]:
         """Send keys to a tmux session by validated name."""
 
-        cwd: str = "."
+        is_trusted, cwd = _tmux_session_target(session_name)
         req = TmuxSessionInput(session_name=session_name, cwd=cwd, shell=shell)
-        is_trusted = session_name.startswith("native_mcp_")
-        if is_trusted and not config.SETTINGS.IS_TMUX_INSTALLED:
-            return [types.TextContent(type="text", text=f"Tmux is not installed")]
 
         return await _execute_with_stream(
             command=build_tmux_send_keys_command(
@@ -371,11 +385,8 @@ def register_tools(server: FastMCP) -> None:
     ) -> list[types.TextContent]:
         """Kill a tmux session by validated name."""
 
-        cwd: str = "."
+        is_trusted, cwd = _tmux_session_target(session_name)
         req = TmuxSessionInput(session_name=session_name, cwd=cwd, shell=shell)
-        is_trusted = session_name.startswith("native_mcp_")
-        if is_trusted and not config.SETTINGS.IS_TMUX_INSTALLED:
-            return [types.TextContent(type="text", text=f"Tmux is not installed")]
 
         return await _execute_with_stream(
             command=build_tmux_kill_command(session_name=req.session_name),

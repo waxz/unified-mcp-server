@@ -168,3 +168,84 @@ def test_env_vars_do_not_leak_into_settings(monkeypatch):
     monkeypatch.setenv("HOST", "evil.example")
     s = load_settings(["-c", "none.toml"])
     assert s.PORT == 8000 and s.HOST == "127.0.0.1" and s.PATH == "/mcp"
+
+
+# ---------------------------------------------- tmux on non-native sessions
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("tmux_get_output", {"session_name": "0"}),
+        ("tmux_send_keys", {"session_name": "0", "keys": "echo hi"}),
+        ("tmux_kill_session", {"session_name": "0"}),
+    ],
+)
+async def test_tmux_tools_on_sandbox_session_without_sandbox_give_clear_error(tmp_path, tool, args):
+    """Used to crash with "'NoneType' is not iterable" (cwd=None)."""
+    app = _server(tmp_path)
+    async with Client(app) as client:
+        res = await client.call_tool(tool, args, raise_on_error=False)
+    text = "".join(getattr(c, "text", "") for c in res.content)
+    assert res.is_error
+    assert "no sandbox is configured" in text and "NoneType" not in text
+
+
+async def test_tmux_tools_reject_bad_session_name(tmp_path):
+    app = _server(tmp_path)
+    async with Client(app) as client:
+        res = await client.call_tool("tmux_get_output", {"session_name": "bad;name"}, raise_on_error=False)
+    assert res.is_error and "Invalid tmux session name" in "".join(c.text for c in res.content)
+
+
+# ------------------------------------------------------- --init-config
+def test_config_template_keys_are_top_level_and_load(tmp_path):
+    """Top-level keys after a [table] silently belong to that table."""
+    import toml
+
+    from unified_mcp_server.config import render_config_template
+
+    text, key = render_config_template()
+    data = toml.loads(text)
+    top = {k for k, v in data.items() if not isinstance(v, dict)}
+    assert {"HOST", "PORT", "PATH", "API_KEYS", "COMMAND_TIMEOUT", "SAFETY_MODE", "IS_IN_DOCKER"} <= top
+    assert data["API_KEYS"] == key and len(key) >= 40 and "__API_KEY__" not in text
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(text)
+    s = load_settings(["-c", str(cfg), "-w", str(tmp_path)])
+    assert s.api_keys == frozenset({key}) and s.SAFETY_MODE == "strict"
+
+
+def test_config_template_examples_work_when_uncommented(tmp_path):
+    from unified_mcp_server.config import render_config_template
+
+    text, _ = render_config_template()
+    lines = text.splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("# [TRUSTED_COMMANDS.t_test]"))
+    for i in range(start, start + 5):
+        lines[i] = lines[i][2:]
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("\n".join(lines))
+    s = load_settings(["-c", str(cfg), "-w", str(tmp_path)])
+    assert s.TRUSTED_COMMANDS["t_test"]["command"] == "pytest -q"
+
+
+def test_each_template_gets_a_new_key():
+    from unified_mcp_server.config import render_config_template
+
+    assert render_config_template()[1] != render_config_template()[1]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
+def test_init_config_writes_private_file_and_refuses_overwrite(tmp_path, capsys):
+    from unified_mcp_server.server import main
+
+    target = tmp_path / "sub" / "config.toml"
+    main(["--init-config", str(target)])
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    first = target.read_text()
+    with pytest.raises(SystemExit):
+        main(["--init-config", str(target)])
+    assert target.read_text() == first
+    main(["--init-config", str(target), "--force"])
+    assert target.read_text() != first  # new key
+    main(["--init-config", "-"])
+    assert "API_KEYS" in capsys.readouterr().out

@@ -15,7 +15,7 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from mcp.server.session import ServerSession
 
 from . import config
-from .config import Settings, load_settings
+from .config import Settings, build_parser, load_settings, write_config_template
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,19 @@ def _install_disconnect_guard() -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     # Log to stderr: with the stdio transport, stdout carries the protocol.
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    args = build_parser().parse_args(argv)
+    if args.init_config is not None:
+        try:
+            written = write_config_template(args.init_config, force=args.force)
+        except FileExistsError as exc:
+            sys.exit(f"error: {exc}")
+        if written is not None:
+            print(
+                f"Wrote {written} (with a new API key; keep it private).\n"
+                f"Edit it, then run: unified-mcp-server -c {written}",
+                file=sys.stderr,
+            )
+        return
     settings = load_settings(argv)
     app = build_server(settings)
     _install_disconnect_guard()
