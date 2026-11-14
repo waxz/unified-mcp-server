@@ -147,6 +147,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Log to stderr: with the stdio transport, stdout carries the protocol.
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     args = build_parser().parse_args(argv)
+    if args.version:
+        from .update import installed_version
+
+        print(installed_version())
+        return
+    if args.update is not None:
+        from .update import run_update
+
+        sys.exit(run_update(args.update, restart=not args.no_restart))
     if args.init_config is not None:
         try:
             written = write_config_template(args.init_config, force=args.force)
@@ -172,6 +181,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             logger.warning("Approvals dashboard (keep it open; new link on every restart): %s", url)
 
     if settings.TRANSPORT == "http":
+        # `unified-mcp-server --update` (or `kill -HUP <pid>`) restarts us in place.
+        from .update import install_restart_handler
+
+        install_restart_handler()
         app.run(transport="http", host=settings.HOST, port=settings.PORT, path=settings.PATH)
     else:
         app.run()

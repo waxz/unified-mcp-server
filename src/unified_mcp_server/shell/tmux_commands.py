@@ -31,7 +31,8 @@ def build_tmux_bootstrap_command(session_name: str, wait_for_prompt: bool = True
     instead of failing.
     """
     session = shlex.quote(validate_tmux_session_name(session_name))
-    create = f"tmux new-session -s {session} -d"
+    # 200x50 instead of tmux's detached default of 80x24: less wrapping, more context.
+    create = f"tmux new-session -s {session} -d -x 200 -y 50"
     if not wait_for_prompt:
         return create
     tries = int(TMUX_READY_TIMEOUT_S / _TMUX_POLL_S)
@@ -72,9 +73,15 @@ def build_tmux_reset_pane_command(session_name: str) -> list[str]:
     ]
 
 
-def build_tmux_capture_command(session_name: str) -> str:
+def build_tmux_capture_command(session_name: str, lines: int = 0) -> str:
+    """Capture the visible screen, or with ``lines`` the last N lines incl. scrollback.
+
+    -J joins lines tmux wrapped at the pane width, so long log lines stay whole.
+    """
     session = shlex.quote(validate_tmux_session_name(session_name))
-    return f"tmux capture-pane -t {session} -p"
+    if lines > 0:
+        return f"tmux capture-pane -t {session} -p -J -S -{int(lines)} | tail -n {int(lines)}"
+    return f"tmux capture-pane -t {session} -p -J"
 
 
 def build_tmux_clear_command(session_name: str) -> str:

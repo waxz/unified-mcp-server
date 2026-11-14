@@ -146,10 +146,15 @@ async def run_shell_command(
     on_stdout: Callable[[str], Awaitable[None]] | None = None,
     on_stderr: Callable[[str], Awaitable[None]] | None = None,
     is_trusted: bool|None = None,
+    timeout: int | None = None,
 ) -> ExecutionResult:
-    """Execute command with streaming callbacks and safe lifecycle handling."""
+    """Execute command with streaming callbacks and safe lifecycle handling.
+
+    ``timeout`` (seconds) overrides COMMAND_TIMEOUT for this call.
+    """
     if config.SETTINGS is None:
         raise RuntimeError("Server settings are not initialized")
+    limit = timeout or config.SETTINGS.COMMAND_TIMEOUT
 
     
     if is_trusted:
@@ -323,7 +328,7 @@ async def run_shell_command(
                 _read_stream(process.stdout, stdout_lines, on_stdout),
                 _read_stream(process.stderr, stderr_lines, on_stderr),
             ),
-            timeout=config.SETTINGS.COMMAND_TIMEOUT,
+            timeout=limit,
         )
     except asyncio.TimeoutError:
         timed_out = True
@@ -361,7 +366,8 @@ async def run_shell_command(
     stderr_text = "\n".join(stderr_lines)
     if timed_out:
         stderr_text = (
-            f"{stderr_text}\n[Timed out after {config.SETTINGS.COMMAND_TIMEOUT}s]"
+            f"{stderr_text}\n[Timed out after {limit}s; pass a larger timeout, up to "
+            f"{config.SETTINGS.COMMAND_TIMEOUT_MAX}s, or use tmux_execute for long jobs]"
         ).strip()
     if client_disconnected:
         stderr_text = (

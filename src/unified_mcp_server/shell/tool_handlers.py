@@ -43,6 +43,9 @@ from .tmux_commands import (
     build_tmux_reset_pane_command,
     build_tmux_send_keys_command,
 )
+from fastmcp.exceptions import ToolError
+
+from ..common.mcp_types_utils import format_shell_output
 from .approvals import authorize
 from .execution_policy import resolve_request, validate_tmux_session_name
 from ..common.mcp_types_utils import create_shell_result, create_str_result
@@ -59,6 +62,7 @@ def register_tools(server: FastMCP) -> None:
         ctx: Context,
         shell: str,
         is_trusted: bool | None = None,
+        timeout: int | None = None,
     ) -> ExecutionResult:
         async def _on_stdout(line: str) -> None:
             try:
@@ -80,27 +84,20 @@ def register_tools(server: FastMCP) -> None:
                 on_stdout=_on_stdout,
                 on_stderr=_on_stderr,
                 is_trusted=is_trusted,
+                timeout=timeout,
             )
         except ClosedResourceError:
-            return ExecutionResult(stderr="[client disconnected]")
-            # return [types.TextContent(type="text", text="[client disconnected]")]
+            # (Previously built an ExecutionResult without its required fields.)
+            return ExecutionResult(
+                stderr="[client disconnected]", command=command, shell=shell, cwd=cwd, cancelled=True
+            )
 
         if result.cancelled:
-            return ExecutionResult(stderr="[client disconnected]")
-            # return [types.TextContent(type="text", text="[client disconnected]")]
+            return result.model_copy(update={"stderr": "[client disconnected]"})
 
-        parts: list[str] = []
-        if result.stdout:
-            parts.append(result.stdout)
-        if result.stderr:
-            parts.append(f"[stderr]\n{result.stderr}")
-        parts.append(f"[exit code: {result.exit_code}]")
-        if result.timed_out and config.SETTINGS is not None:
-            parts.append(f"[timed out after {config.SETTINGS.COMMAND_TIMEOUT}s]")
-        if not result.exit_code == 0:
-            raise ValueError(f"{parts}")
+        if result.exit_code != 0:
+            raise ToolError(format_shell_output(result))
         return result
-        # return [types.TextContent(type="text", text="\n\n".join(parts))]
 
     def _tmux_session_target(session_name: str) -> tuple[bool, str]:
         """Return (is_trusted, cwd) for running tmux commands on a session.
@@ -139,6 +136,7 @@ def register_tools(server: FastMCP) -> None:
         cwd: str,
         ctx: Context,
         shell: str = "bash",
+        timeout: int | None = None,
     ) -> list[types.TextContent]:
         """Run a shell command on the server and stream its output.
 
@@ -149,7 +147,14 @@ def register_tools(server: FastMCP) -> None:
         tell the user, then call again with exactly the same arguments; it
         runs as soon as they approve (requests stay open about 10 minutes).
         A denial is final: don't retry unless the user asks.
+
+        `timeout` (seconds) overrides the default limit (COMMAND_TIMEOUT, 30 s)
+        up to COMMAND_TIMEOUT_MAX (600 s). For anything longer, or servers that
+        keep running, use tmux_execute.
         """
+        max_timeout = config.SETTINGS.COMMAND_TIMEOUT_MAX
+        if timeout is not None and not 1 <= timeout <= max_timeout:
+            raise ValueError(f"timeout must be between 1 and {max_timeout} seconds")
         try:
             logger.debug(
                 "Receive command: command=%s, cwd=%s, shell=%s",
@@ -176,6 +181,7 @@ def register_tools(server: FastMCP) -> None:
                             ctx=ctx,
                             shell=approved.shell,
                             is_trusted=True,
+                            timeout=timeout,
                         )
                     )
                 ]
@@ -187,6 +193,7 @@ def register_tools(server: FastMCP) -> None:
                         cwd=req.cwd,
                         ctx=ctx,
                         shell=req.shell,
+                        timeout=timeout,
                     )
                 )
             ]
@@ -326,15 +333,22 @@ def register_tools(server: FastMCP) -> None:
         ctx: Context,
         clear_after: bool = False,
         shell: str = "bash",
+        lines: int = 0,
     ) -> list[types.TextContent]:
-        """Capture tmux pane output; optionally clear after reading."""
+        """Read a tmux session's output.
 
+        By default returns the visible screen. `lines` (1-5000) returns the
+        last N lines including scrollback, e.g. lines=200 for a build log.
+        `clear_after` clears the screen afterwards.
+        """
+        if not 0 <= lines <= 5000:
+            raise ValueError("lines must be between 0 and 5000")
         is_trusted, cwd = _tmux_session_target(session_name)
 
         result = [
             create_shell_result(
                 await _execute_with_stream(
-                    command=build_tmux_capture_command(session_name=session_name),
+                    command=build_tmux_capture_command(session_name=session_name, lines=lines),
                     cwd=cwd,
                     ctx=ctx,
                     shell=shell,
