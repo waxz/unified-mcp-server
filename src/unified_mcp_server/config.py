@@ -127,8 +127,11 @@ class Settings(BaseModel):
     #: Without a sandbox, ask the user to approve commands that aren't in
     #: TRUSTED_COMMANDS (MCP client prompt and/or approval web page).
     APPROVE_UNTRUSTED: bool = True
-    #: Seconds to wait for that approval; no answer is a denial.
-    APPROVAL_TIMEOUT: int = 30
+    #: Seconds an approval request stays open; no answer by then denies it.
+    APPROVAL_TIMEOUT: int = 600
+    #: Seconds one tool call waits for the answer before returning "pending"
+    #: (call again with the same arguments to pick the request back up).
+    APPROVAL_WAIT: int = 25
     ALLOWED_SHELLS: dict[str, str] = Field(default_factory=dict)
     ALLOWED_DIRECTORIES_HOST: list[str] = Field(default_factory=list)
     ALLOWED_DIRECTORIES_DOCKER: list[str] = Field(default_factory=list)
@@ -179,8 +182,15 @@ class Settings(BaseModel):
     @field_validator("APPROVAL_TIMEOUT")
     @classmethod
     def _approval_timeout(cls, value: int) -> int:
+        if not 1 <= value <= 86400:
+            raise ValueError("APPROVAL_TIMEOUT must be between 1 and 86400 seconds")
+        return value
+
+    @field_validator("APPROVAL_WAIT")
+    @classmethod
+    def _approval_wait(cls, value: int) -> int:
         if not 1 <= value <= 600:
-            raise ValueError("APPROVAL_TIMEOUT must be between 1 and 600 seconds")
+            raise ValueError("APPROVAL_WAIT must be between 1 and 600 seconds")
         return value
 
     @field_validator("SAFETY_MODE")
@@ -368,6 +378,8 @@ class Settings(BaseModel):
             merged["APPROVE_UNTRUSTED"] = False
         if getattr(args, "approval_timeout", None) is not None:
             merged["APPROVAL_TIMEOUT"] = args.approval_timeout
+        if getattr(args, "approval_wait", None) is not None:
+            merged["APPROVAL_WAIT"] = args.approval_wait
 
         # The sandbox's own dirs are always allowed inside the sandbox.
         host_root = merged.get("DOCKER_SANDBOX_HOST_ROOT")
@@ -433,8 +445,11 @@ def build_parser() -> argparse.ArgumentParser:
         "(APPROVE_UNTRUSTED = false)",
     )
     parser.add_argument("--approval-timeout", type=int, metavar="SECONDS", default=None,
-                        help="How long to wait for an approval; no answer denies "
-                        "(APPROVAL_TIMEOUT, default 30)")
+                        help="How long an approval request stays open; no answer denies "
+                        "it (APPROVAL_TIMEOUT, default 600)")
+    parser.add_argument("--approval-wait", type=int, metavar="SECONDS", default=None,
+                        help="How long one tool call waits for the answer before "
+                        "returning 'pending' (APPROVAL_WAIT, default 25)")
     parser.add_argument(
         "--init-config", nargs="?", const="config.toml", default=None, metavar="PATH",
         help="Write a commented config template with a freshly generated API key to "

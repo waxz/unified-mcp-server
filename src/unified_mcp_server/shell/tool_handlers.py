@@ -144,10 +144,11 @@ def register_tools(server: FastMCP) -> None:
 
         `command` is either the name of a trusted command (see
         list_trusted_commands) or a command line. A command line that isn't
-        trusted needs the user's approval (they have about 30 s to answer);
-        once approved, the same command in the same `cwd` runs without asking
-        again until the server restarts. A denial or no answer is an error:
-        ask the user before retrying.
+        trusted needs the user's approval. If they haven't answered within
+        about 25 s the call returns "approval pending" without running it:
+        tell the user, then call again with exactly the same arguments; it
+        runs as soon as they approve (requests stay open about 10 minutes).
+        A denial is final: don't retry unless the user asks.
         """
         try:
             logger.debug(
@@ -243,7 +244,12 @@ def register_tools(server: FastMCP) -> None:
         session_name: str = "",
         shell: str = "bash",
     ) -> List[dict[str, str] | types.TextContent]:
-        """Run a command in tmux; validates `session_name`."""
+        """Start a command in a new tmux session (for long-running commands).
+
+        Same approval rules as execute_command: an untrusted command line may
+        return "approval pending"; call again with the same arguments once the
+        user has approved it. Read output with tmux_get_output.
+        """
         cwd: str = "."
 
         # Untrusted command without a sandbox: needs the user's approval.
