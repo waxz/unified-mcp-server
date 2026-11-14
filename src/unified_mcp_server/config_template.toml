@@ -29,6 +29,13 @@ IS_IN_DOCKER = false
 # default: a client could then run any command on this machine, bypassing
 # TRUSTED_COMMANDS.
 ALLOW_HOST_TMUX_INPUT = false
+# A command that isn't in TRUSTED_COMMANDS (and no sandbox is configured) can
+# still run if you approve it: in your MCP client when it supports prompts,
+# or on an approval page whose link is printed in this server's log (HTTP
+# only; the model never sees it). No answer within APPROVAL_TIMEOUT seconds
+# denies it. Approved commands stay allowed until the server restarts.
+APPROVE_UNTRUSTED = true
+APPROVAL_TIMEOUT = 30
 
 # ---- tool families --------------------------------------------------------------
 [UNIFIED]

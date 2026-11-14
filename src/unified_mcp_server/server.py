@@ -112,6 +112,10 @@ def build_server(settings: Settings) -> FastMCP:
         # Tool names of the two families don't overlap, and FastMCP would
         # reject a duplicate name, so no collision check is needed here.
         register_shell_tools(_PrefixedRegistrar(app, SHELL_PREFIX) if settings.NAMESPACED else app)
+        from .shell.approvals import APPROVALS, register_approval_routes
+
+        APPROVALS.reset()  # approvals last for the life of one server
+        register_approval_routes(app)
 
     keys = settings.api_keys
     if keys and settings.TRANSPORT == "http":

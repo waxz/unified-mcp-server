@@ -87,6 +87,8 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `--safety-mode strict\|relax` | shell safety mode (`SAFETY_MODE`) |
 | `--public-url URL` | base URL for patch-preview links (`PUBLIC_URL`) |
 | `--in-docker` | server runs in a container; run commands directly (`IS_IN_DOCKER`) |
+| `--no-approval` | refuse untrusted commands instead of asking you (`APPROVE_UNTRUSTED = false`) |
+| `--approval-timeout SECONDS` | how long to wait for your approval (`APPROVAL_TIMEOUT`, default 30) |
 | `--allow-host-tmux-input` | let `tmux_send_keys` type into host sessions (`ALLOW_HOST_TMUX_INPUT`; runs arbitrary commands) |
 
 Precedence: installed default config → your config file → CLI flags.
@@ -139,8 +141,24 @@ this server doesn't know are logged and ignored.
 
 - `TRUSTED_COMMANDS` run directly on the host, by name:
   `execute_command(command="t_test", cwd=".")`.
-- Any other command on a Linux host is wrapped in the external `drun` sandbox
-  helper (expected in `~/.bashrc`). Without `drun`, only trusted commands run.
+- Any other command, when no sandbox is configured, needs **your approval**
+  (`APPROVE_UNTRUSTED = true`, the default):
+  - your MCP client shows an allow/deny prompt, if it supports MCP
+    elicitation;
+  - over HTTP, the server log also prints a link to an allow/deny page. The
+    link carries a one-time token and is never sent to the model, so the
+    model can't approve its own request.
+
+  Whichever you answer first wins. No answer within `APPROVAL_TIMEOUT`
+  seconds (default 30) denies the command. An approved command (same command,
+  shell and working directory) stays allowed until the server restarts;
+  nothing is written to `config.toml`. The working directory must still be
+  inside the allowed roots. `--no-approval` refuses untrusted commands
+  instead. Over stdio with a client that can't show prompts, there is no way
+  to approve, so the command is refused; use `TRUSTED_COMMANDS` there.
+- With a sandbox configured (`[DOCKER_CONFIG.<os>] work_dir`), other
+  commands run in it through the external `drun` helper (expected in
+  `~/.bashrc`) instead of asking for approval.
 - Set `IS_IN_DOCKER = true` when the server itself runs inside a container:
   every command then runs directly in it.
 - `SAFETY_MODE = "strict"` forces `bash` for untrusted commands.
