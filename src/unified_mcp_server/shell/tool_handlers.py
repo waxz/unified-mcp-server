@@ -43,6 +43,7 @@ from .tmux_commands import (
     build_tmux_reset_pane_command,
     build_tmux_send_keys_command,
 )
+from .approvals import authorize
 from .execution_policy import resolve_request, validate_tmux_session_name
 from ..common.mcp_types_utils import create_shell_result, create_str_result
 
@@ -139,7 +140,15 @@ def register_tools(server: FastMCP) -> None:
         ctx: Context,
         shell: str = "bash",
     ) -> list[types.TextContent]:
-        """Run a shell command and stream output; returns `Execution failed: ...` on errors."""
+        """Run a shell command on the server and stream its output.
+
+        `command` is either the name of a trusted command (see
+        list_trusted_commands) or a command line. A command line that isn't
+        trusted needs the user's approval (they have about 30 s to answer);
+        once approved, the same command in the same `cwd` runs without asking
+        again until the server restarts. A denial or no answer is an error:
+        ask the user before retrying.
+        """
         try:
             logger.debug(
                 "Receive command: command=%s, cwd=%s, shell=%s",
@@ -154,6 +163,21 @@ def register_tools(server: FastMCP) -> None:
                 req.cwd,
                 req.shell,
             )
+
+            # Untrusted command without a sandbox: needs the user's approval.
+            approved = await authorize(req.command, req.cwd, req.shell, ctx)
+            if approved is not None:
+                return [
+                    create_shell_result(
+                        await _execute_with_stream(
+                            command=approved.command,
+                            cwd=approved.cwd,
+                            ctx=ctx,
+                            shell=approved.shell,
+                            is_trusted=True,
+                        )
+                    )
+                ]
 
             return [
                 create_shell_result(
@@ -222,7 +246,10 @@ def register_tools(server: FastMCP) -> None:
         """Run a command in tmux; validates `session_name`."""
         cwd: str = "."
 
-        request = resolve_request(command=command, cwd=cwd, shell=shell)
+        # Untrusted command without a sandbox: needs the user's approval.
+        request = await authorize(command, cwd, shell, ctx) or resolve_request(
+            command=command, cwd=cwd, shell=shell
+        )
         is_trusted = request.trusted
 
         if is_trusted and not config.SETTINGS.IS_TMUX_INSTALLED:
@@ -362,9 +389,20 @@ def register_tools(server: FastMCP) -> None:
         ctx: Context,
         shell: str = "bash",
     ) -> list[types.TextContent]:
-        """Send keys to a tmux session by validated name."""
+        """Type keys into a tmux session.
+
+        Host sessions (native_mcp_*) are a shell on this machine, so typing into
+        them would run arbitrary commands and bypass TRUSTED_COMMANDS. That is
+        refused unless ALLOW_HOST_TMUX_INPUT is enabled.
+        """
 
         is_trusted, cwd = _tmux_session_target(session_name)
+        if is_trusted and not config.SETTINGS.ALLOW_HOST_TMUX_INPUT:
+            raise ValueError(
+                f"Typing into host tmux session '{session_name}' is disabled: it would run "
+                "arbitrary commands on this machine, bypassing TRUSTED_COMMANDS. Enable it "
+                "with ALLOW_HOST_TMUX_INPUT = true (or --allow-host-tmux-input)."
+            )
         req = TmuxSessionInput(session_name=session_name, cwd=cwd, shell=shell)
 
         return await _execute_with_stream(

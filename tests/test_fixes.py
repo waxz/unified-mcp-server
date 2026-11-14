@@ -206,7 +206,11 @@ def test_config_template_keys_are_top_level_and_load(tmp_path):
     text, key = render_config_template()
     data = toml.loads(text)
     top = {k for k, v in data.items() if not isinstance(v, dict)}
-    assert {"HOST", "PORT", "PATH", "API_KEYS", "COMMAND_TIMEOUT", "SAFETY_MODE", "IS_IN_DOCKER"} <= top
+    assert {
+        "HOST", "PORT", "PATH", "API_KEYS", "COMMAND_TIMEOUT", "SAFETY_MODE", "IS_IN_DOCKER",
+        "ALLOW_HOST_TMUX_INPUT",
+    } <= top
+    assert data["ALLOW_HOST_TMUX_INPUT"] is False
     assert data["API_KEYS"] == key and len(key) >= 40 and "__API_KEY__" not in text
     cfg = tmp_path / "config.toml"
     cfg.write_text(text)
@@ -249,3 +253,32 @@ def test_init_config_writes_private_file_and_refuses_overwrite(tmp_path, capsys)
     assert target.read_text() != first  # new key
     main(["--init-config", "-"])
     assert "API_KEYS" in capsys.readouterr().out
+
+
+# ------------------------------------------- typing into host tmux sessions
+@pytest.mark.skipif(shutil.which("tmux") is None or sys.platform == "win32", reason="needs tmux")
+async def test_send_keys_to_host_session_refused_by_default(tmp_path, monkeypatch):
+    """tmux_send_keys on a native_mcp_ session was an arbitrary-command loophole."""
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
+    marker = tmp_path / "pwned"
+    name = "native_mcp_loophole"
+    subprocess.run(["tmux", "new-session", "-d", "-s", name], check=True)
+    try:
+        app = _server(tmp_path)
+        async with Client(app) as client:
+            res = await client.call_tool(
+                "tmux_send_keys", {"session_name": name, "keys": f"touch {marker}"},
+                raise_on_error=False,
+            )
+        text = "".join(getattr(c, "text", "") for c in res.content)
+        assert res.is_error and "ALLOW_HOST_TMUX_INPUT" in text
+        await anyio.sleep(0.5)
+        assert not marker.exists()
+    finally:
+        subprocess.run(["tmux", "kill-server"], capture_output=True)
+
+
+def test_allow_host_tmux_input_flag_and_default(tmp_path):
+    assert load_settings(["-c", str(tmp_path / "none.toml")]).ALLOW_HOST_TMUX_INPUT is False
+    s = load_settings(["-c", str(tmp_path / "none.toml"), "--allow-host-tmux-input"])
+    assert s.ALLOW_HOST_TMUX_INPUT is True

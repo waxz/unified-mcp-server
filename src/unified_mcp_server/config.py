@@ -121,6 +121,14 @@ class Settings(BaseModel):
     IS_IN_DOCKER: bool = False
     IS_TMUX_INSTALLED: bool = Field(default_factory=lambda: check_installed("tmux"))
     TRUSTED_COMMANDS: dict[str, dict[str, str]] = Field(default_factory=dict)
+    #: Allow tmux_send_keys on host (native_mcp_*) sessions. Off by default:
+    #: typing into a host shell runs arbitrary commands.
+    ALLOW_HOST_TMUX_INPUT: bool = False
+    #: Without a sandbox, ask the user to approve commands that aren't in
+    #: TRUSTED_COMMANDS (MCP client prompt and/or approval web page).
+    APPROVE_UNTRUSTED: bool = True
+    #: Seconds to wait for that approval; no answer is a denial.
+    APPROVAL_TIMEOUT: int = 30
     ALLOWED_SHELLS: dict[str, str] = Field(default_factory=dict)
     ALLOWED_DIRECTORIES_HOST: list[str] = Field(default_factory=list)
     ALLOWED_DIRECTORIES_DOCKER: list[str] = Field(default_factory=list)
@@ -166,6 +174,13 @@ class Settings(BaseModel):
     def _timeout(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("COMMAND_TIMEOUT must be positive")
+        return value
+
+    @field_validator("APPROVAL_TIMEOUT")
+    @classmethod
+    def _approval_timeout(cls, value: int) -> int:
+        if not 1 <= value <= 600:
+            raise ValueError("APPROVAL_TIMEOUT must be between 1 and 600 seconds")
         return value
 
     @field_validator("SAFETY_MODE")
@@ -347,6 +362,12 @@ class Settings(BaseModel):
             merged["PUBLIC_URL"] = args.public_url
         if getattr(args, "in_docker", None):
             merged["IS_IN_DOCKER"] = True
+        if getattr(args, "allow_host_tmux_input", None):
+            merged["ALLOW_HOST_TMUX_INPUT"] = True
+        if getattr(args, "no_approval", False):
+            merged["APPROVE_UNTRUSTED"] = False
+        if getattr(args, "approval_timeout", None) is not None:
+            merged["APPROVAL_TIMEOUT"] = args.approval_timeout
 
         # The sandbox's own dirs are always allowed inside the sandbox.
         host_root = merged.get("DOCKER_SANDBOX_HOST_ROOT")
@@ -401,6 +422,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--in-docker", action="store_true", default=None,
                         help="The server runs inside a container: run all commands "
                         "directly (IS_IN_DOCKER)")
+    parser.add_argument(
+        "--allow-host-tmux-input", action="store_true", default=None,
+        help="Allow tmux_send_keys to type into host (native_mcp_*) sessions. This lets "
+        "clients run arbitrary commands on this machine (ALLOW_HOST_TMUX_INPUT)",
+    )
+    parser.add_argument(
+        "--no-approval", action="store_true",
+        help="Refuse untrusted commands instead of asking you to approve them "
+        "(APPROVE_UNTRUSTED = false)",
+    )
+    parser.add_argument("--approval-timeout", type=int, metavar="SECONDS", default=None,
+                        help="How long to wait for an approval; no answer denies "
+                        "(APPROVAL_TIMEOUT, default 30)")
     parser.add_argument(
         "--init-config", nargs="?", const="config.toml", default=None, metavar="PATH",
         help="Write a commented config template with a freshly generated API key to "

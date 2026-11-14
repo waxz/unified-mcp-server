@@ -25,6 +25,8 @@ pytestmark = pytest.mark.skipif(
 
 CONFIG = """
 COMMAND_TIMEOUT = 20
+# The tmux tests type into host sessions, which is off by default.
+ALLOW_HOST_TMUX_INPUT = true
 
 [TRUSTED_COMMANDS.t_echo]
 command = "echo hello-from-shell"
