@@ -31,13 +31,16 @@ class FakeDist:
 
 
 # ------------------------------------------------------------ install kind
-def test_detect_uv_tool_install():
-    m = update.detect_install("/home/me/.local/share/uv/tools/unified-mcp-server", FakeDist({"url": "https://x"}))
-    assert m.kind == "uv-tool"
+def test_detect_uv_tool_install_by_receipt(tmp_path):
+    """Custom UV_TOOL_DIR paths have no "uv" in them; the receipt file is reliable."""
+    env = tmp_path / "anywhere" / "unified-mcp-server"
+    env.mkdir(parents=True)
+    (env / "uv-receipt.toml").write_text("[tool]\n")
+    assert update.detect_install(str(env), FakeDist({"url": "https://x"})).kind == "uv-tool"
 
 
-def test_detect_pip_install():
-    assert update.detect_install("/home/me/venv", FakeDist(None)).kind == "pip"
+def test_detect_pip_install(tmp_path):
+    assert update.detect_install(str(tmp_path), FakeDist(None)).kind == "pip"
 
 
 def test_detect_editable_install_refuses_update():
@@ -49,7 +52,7 @@ def test_detect_editable_install_refuses_update():
 
 def test_update_commands():
     uv_cmd = update.update_command(update.InstallMethod("uv-tool"), "v1.2")
-    assert uv_cmd[1:4] == ["tool", "install", "--reinstall"]
+    assert uv_cmd[1:4] == ["tool", "install", "--reinstall"] and "--compile-bytecode" in uv_cmd
     assert uv_cmd[-1] == "unified-mcp-server @ https://github.com/waxz/unified-mcp-server/archive/v1.2.zip"
     pip_cmd = update.update_command(update.InstallMethod("pip"), "main")
     assert pip_cmd[-1].endswith("/archive/main.zip") and "install" in pip_cmd

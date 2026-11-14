@@ -56,8 +56,9 @@ def detect_install(prefix: str | None = None, dist=None) -> InstallMethod:
             return InstallMethod("editable", json.loads(direct).get("url", ""))
     except (metadata.PackageNotFoundError, ValueError):
         pass
-    parts = Path(prefix).parts
-    if "tools" in parts and "uv" in parts:
+    # Every `uv tool` environment has a receipt at its root (works with a
+    # custom UV_TOOL_DIR too, unlike guessing from the path).
+    if (Path(prefix) / "uv-receipt.toml").is_file():
         return InstallMethod("uv-tool", prefix)
     return InstallMethod("pip", prefix)
 
@@ -67,11 +68,15 @@ def update_command(method: InstallMethod, ref: str) -> list[str]:
     if method.kind == "uv-tool":
         uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
         python = f"{sys.version_info.major}.{sys.version_info.minor}"
-        return [uv, "tool", "install", "--reinstall", "--python", python, f"{DIST} @ {url}"]
+        # --compile-bytecode: otherwise the restarted server compiles every
+        # module on its first start, which makes the restart look stuck.
+        return [uv, "tool", "install", "--reinstall", "--compile-bytecode", "--python", python,
+                f"{DIST} @ {url}"]
     if method.kind == "pip":
         uv = shutil.which("uv")
         if uv:  # uv pip works even in environments without pip
-            return [uv, "pip", "install", "--python", sys.executable, "--reinstall", f"{DIST} @ {url}"]
+            return [uv, "pip", "install", "--python", sys.executable, "--reinstall",
+                    "--compile-bytecode", f"{DIST} @ {url}"]
         return [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", f"{DIST} @ {url}"]
     raise RuntimeError(
         f"This copy is an editable install ({method.detail}); update it with `git pull` "
@@ -149,7 +154,8 @@ def run_update(ref: str = "main", restart: bool = True) -> int:
     for pid, args in servers:
         try:
             os.kill(pid, signal.SIGHUP)
-            print(f"Restarting pid {pid} in place: {' '.join(args[1:])}", file=sys.stderr)
+            print(f"Restarting pid {pid} in place (back in a few seconds): {' '.join(args[1:])}",
+                  file=sys.stderr)
         except OSError as exc:
             print(f"Couldn't signal pid {pid}: {exc}", file=sys.stderr)
     return 0
