@@ -78,19 +78,30 @@ title shows how many requests are waiting.
   Put an authenticating gateway in front of it and tunnel the gateway, never
   the service itself. Keep the gateway's key outside `-w` too.
 
-## 5. Upgrade and restart
-
-Restarting the server from one of its own tool calls kills the call that does
-it, so schedule the restart as a detached job and let the call return first.
-
-**Server running in a tmux pane** (e.g. pane `2:1.1`):
+## 5. Update and restart
 
 ```bash
-uv tool install --reinstall --python 3.12 "unified-mcp-server @ https://github.com/waxz/unified-mcp-server/archive/refs/heads/main.zip"
-setsid nohup bash -c 'sleep 5; tmux send-keys -t 2:1.1 C-c; sleep 4; tmux send-keys -t 2:1.1 "unified-mcp-server -c ~/.config/unified-mcp-server/config.toml -w ~/dev -t http -H 127.0.0.1 -P 7000 -p /mcp" Enter' >/dev/null 2>&1 < /dev/null &
+unified-mcp-server --update
 ```
 
-**As a systemd user service** (not yet tried in practice). Save as
+This reinstalls from GitHub `main` with the tool that installed it (`uv tool`
+or pip), then sends each running HTTP server of yours `SIGHUP`. A server that
+gets `SIGHUP` waits 2 s (so the reply to the call that triggered it still goes
+out) and re-executes itself with the same arguments: same PID, same tmux
+pane / terminal / systemd unit, new code. So it also works from a tool call:
+approve `unified-mcp-server --update` and the server restarts itself.
+
+- `--update <branch|tag|commit>`: install a specific version.
+- `--no-restart`: reinstall only; restart later with `kill -HUP <pid>`.
+- Only servers started with `-t http` are restarted (a stdio server would
+  lose its client). An editable install from a checkout refuses to update:
+  `git pull` there instead.
+
+After a restart: approvals given "until restart" are gone, the dashboard link
+is new (see the server's log), and tmux sessions started by the server keep
+running.
+
+**Running it as a systemd user service** (not yet tried in practice). Save as
 `~/.config/systemd/user/unified-mcp-server.service`:
 
 ```ini
@@ -110,12 +121,6 @@ WantedBy=default.target
 systemctl --user daemon-reload && systemctl --user enable --now unified-mcp-server
 journalctl --user -u unified-mcp-server | grep "Approvals dashboard"
 ```
-
-Restart it from a tool call with a delay, so the call can return first:
-`systemd-run --user --on-active=5 systemctl --user restart unified-mcp-server`.
-
-After a restart: approvals given "until restart" are gone, the dashboard link
-is new, and tmux sessions started by the server keep running.
 
 ## 6. Troubleshooting
 

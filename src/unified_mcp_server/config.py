@@ -469,6 +469,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--force", action="store_true",
                         help="With --init-config: overwrite an existing file")
+    parser.add_argument(
+        "--update", nargs="?", const="main", default=None, metavar="REF",
+        help="Reinstall from GitHub (default: main; or a branch, tag or commit), then "
+        "restart running HTTP servers in place, and exit",
+    )
+    parser.add_argument("--no-restart", action="store_true",
+                        help="With --update: reinstall only")
+    parser.add_argument("--version", action="store_true", help="Print the installed version and exit")
     return parser
 
 

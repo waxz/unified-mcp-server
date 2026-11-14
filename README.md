@@ -43,7 +43,16 @@ The command is installed in `~/.local/bin` (`%USERPROFILE%\.local\bin` on
 Windows). If `unified-mcp-server` isn't found afterwards, open a new terminal or
 run `uv tool update-shell`.
 
-Update with `uv tool install --reinstall` and the same URL; remove with
+**Update** (reinstalls from `main`, then restarts your running HTTP servers in
+place: same process, terminal and arguments, new code):
+
+```bash
+unified-mcp-server --update
+```
+
+`--update <branch|tag|commit>` installs another version, `--no-restart` only
+reinstalls, `--version` prints the installed version. You can also restart a
+running server in place with `kill -HUP <pid>`. Remove with
 `uv tool uninstall unified-mcp-server`.
 
 On Windows the shell tools run commands through PowerShell (`bash` maps to
@@ -96,6 +105,8 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `COMMAND_TIMEOUT_MAX` (config only) | largest per-call `timeout` for `execute_command` (default 600) |
 | `--approval-timeout SECONDS` | how long an approval request stays open (`APPROVAL_TIMEOUT`, default 600) |
 | `--approval-wait SECONDS` | how long one tool call waits before returning "pending" (`APPROVAL_WAIT`, default 25) |
+| `--update [REF]` | reinstall from GitHub (default `main`), restart running HTTP servers in place, exit; `--no-restart` to skip the restart |
+| `--version` | print the installed version |
 | `--allow-host-tmux-input` | let `tmux_send_keys` type into host sessions (`ALLOW_HOST_TMUX_INPUT`; runs arbitrary commands) |
 
 Precedence: installed default config → your config file → CLI flags.
