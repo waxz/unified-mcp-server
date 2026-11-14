@@ -18,11 +18,40 @@ The code started as two separate servers,
 [shell-mcp-server](https://github.com/waxz/shell-mcp-server). It is copied
 into this package and maintained here; neither project is a dependency.
 
-## Install & run
+## Install
+
+One line installs [uv](https://docs.astral.sh/uv/) (which fetches Python 3.12
+if needed) and then the `unified-mcp-server` command. Git is not required.
+
+**Ubuntu / Linux / macOS**
 
 ```bash
-uv venv && uv pip install -e .
+curl -LsSf https://astral.sh/uv/install.sh | sh && ~/.local/bin/uv tool install --python 3.12 "unified-mcp-server @ https://github.com/waxz/unified-mcp-server/archive/refs/heads/main.zip"
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"; & "$env:USERPROFILE\.local\bin\uv.exe" tool install --python 3.12 "unified-mcp-server @ https://github.com/waxz/unified-mcp-server/archive/refs/heads/main.zip"
+```
+
+The command is installed in `~/.local/bin` (`%USERPROFILE%\.local\bin` on
+Windows). If `unified-mcp-server` isn't found afterwards, open a new terminal or
+run `uv tool update-shell`.
+
+Update with `uv tool install --reinstall` and the same URL; remove with
+`uv tool uninstall unified-mcp-server`.
+
+On Windows the shell tools run commands through PowerShell (`bash` maps to
+`powershell.exe`) and the tmux tools are unavailable. CI runs on Ubuntu only.
+
+From a checkout, for development:
+
+```bash
+uv venv && uv pip install -e ".[dev]"
+```
+
+## Run
 
 stdio (Claude Desktop, Claude Code):
 
