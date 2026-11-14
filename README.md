@@ -148,7 +148,10 @@ this server doesn't know are logged and ignored.
     startup. Keep the tab open: it lists every waiting request, updates by
     itself, shows the count in the tab title, and lets you revoke commands
     you allowed earlier. The link changes on every restart.
-  - **Your MCP client's prompt**, if it supports MCP elicitation.
+  - **Your MCP client's prompt**, if it supports MCP elicitation: *Submit*
+    allows the command once (tick the checkbox to allow it until restart),
+    *Decline* denies it. The client draws those buttons; the server only adds
+    the checkbox.
   - **A per-request link** printed in the server log with each request.
 
   Answers: **Allow once**, **Allow until restart** (the same command, shell

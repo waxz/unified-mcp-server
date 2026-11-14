@@ -4,7 +4,9 @@ When no sandbox is configured, a command that isn't a trusted command can
 still run on the host if the person running the server approves it. They can
 answer in three places, whichever is handiest:
 
-* the MCP client's prompt (elicitation), when the client supports it;
+* the MCP client's prompt (elicitation), when the client supports it:
+  Submit allows once (tick the checkbox to allow until restart), Decline
+  denies;
 * the approvals dashboard, a live page listing every pending request, whose
   link is printed once in the server log at startup;
 * a per-request page, whose link is printed in the log with each request.
@@ -35,10 +37,12 @@ import hmac
 import json
 import logging
 import secrets
+import socket
 import time
 from dataclasses import dataclass, field
 from html import escape
 
+from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
@@ -265,16 +269,30 @@ def _client_supports_elicitation(ctx) -> bool:
         return False
 
 
+class _PromptAnswer(BaseModel):
+    """Form shown by the MCP client: Submit allows, Decline denies.
+
+    A single optional checkbox instead of a choice list: clients render a
+    choice as a dropdown (a native picker sheet on phones), which costs an
+    extra tap and puts the options far from the buttons.
+    """
+
+    remember_until_restart: bool = Field(
+        default=False,
+        title="Also allow this exact command until the server restarts",
+    )
+
+
 async def _elicit(ctx, req: ApprovalRequest, store: ApprovalStore) -> None:
     command, shell, cwd = req.key
     message = (
-        "The model wants to run a command that isn't in TRUSTED_COMMANDS, on the "
-        f"machine running unified-mcp-server:\n\n  {command}\n\nin {cwd} (shell: {shell}).\n\n"
-        "“Allow until restart” lets this exact command run again without asking until the "
-        "server restarts."
+        f"Run this command on {socket.gethostname()}?\n\n"
+        f"{command}\n\n"
+        f"in {cwd} ({shell})\n\n"
+        "Submit allows it once. Decline denies it. It isn't in TRUSTED_COMMANDS."
     )
     try:
-        result = await ctx.elicit(message, response_type=[_LABELS[ONCE], _LABELS[SESSION], _LABELS[DENY]])
+        result = await ctx.elicit(message, response_type=_PromptAnswer)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # client couldn't show it: leave the dashboard to decide
@@ -282,9 +300,9 @@ async def _elicit(ctx, req: ApprovalRequest, store: ApprovalStore) -> None:
         return
     action = getattr(result, "action", "")
     if action == "accept":
-        chosen = {v: k for k, v in _LABELS.items()}.get(getattr(result, "data", None))
-        if chosen:
-            store.decide(req, chosen, "client")
+        data = getattr(result, "data", None)
+        remember = bool(getattr(data, "remember_until_restart", False))
+        store.decide(req, SESSION if remember else ONCE, "client")
     elif action == "decline":
         store.decide(req, DENY, "client")
     # "cancel" (dismissed): no answer; the request stays open on the dashboard.
@@ -355,8 +373,12 @@ h1 { font-size:1.4rem; margin:0 0 4px; } h2 { font-size:1.05rem; margin:28px 0 8
 pre { background:var(--mono); padding:10px 12px; border-radius:6px; margin:0 0 8px;
       white-space:pre-wrap; word-break:break-all; font-size:.92rem; }
 .meta { color:var(--muted); font-size:.85rem; margin-bottom:12px; }
-.row { display:flex; gap:8px; flex-wrap:wrap; }
-button { font:inherit; font-size:.95rem; padding:8px 14px; border-radius:6px; border:0; cursor:pointer; color:#fff; }
+/* Deny alone on the left, the two allow buttons on the right; never wraps,
+   so a phone tap can't land on the wrong one after a reflow. */
+.row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.row .deny { margin-right:6px; }
+button { font:inherit; font-size:.95rem; line-height:1.25; padding:10px 8px; min-height:44px;
+         border-radius:6px; border:0; cursor:pointer; color:#fff; }
 .once { background:var(--ok); } .session { background:var(--ok2); } .deny { background:var(--no); }
 .ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
 .empty { color:var(--muted); padding:8px 0; }
@@ -406,9 +428,9 @@ function render(state) {
     <div class="card"><pre>${esc(r.command)}</pre>
       <div class="meta">in ${esc(r.cwd)} · ${esc(r.shell)} · expires in ${Math.floor(r.expires_in/60)}m ${r.expires_in%60}s</div>
       <div class="row">
+        <button class="deny" onclick='post("/approvals/decide", {id: "${r.id}", decision: "deny"})'>Deny</button>
         <button class="once" onclick='post("/approvals/decide", {id: "${r.id}", decision: "once"})'>Allow once</button>
         <button class="session" onclick='post("/approvals/decide", {id: "${r.id}", decision: "session"})'>Allow until restart</button>
-        <button class="deny" onclick='post("/approvals/decide", {id: "${r.id}", decision: "deny"})'>Deny</button>
       </div></div>`).join("") : '<div class="empty">Nothing waiting.</div>';
   a.innerHTML = state.approved.length ? state.approved.map(r => `
     <div class="card"><pre>${esc(r.command)}</pre>
@@ -489,7 +511,7 @@ def register_approval_routes(app) -> None:
                                f"<pre>{escape(command)}</pre>")
         buttons = "".join(
             f'<button class="{d}" name="decision" value="{d}">{_LABELS[d]}</button>'
-            for d in (ONCE, SESSION, DENY)
+            for d in (DENY, ONCE, SESSION)  # same order as the dashboard
         )
         body = (
             "<h1>Run this command?</h1>"

@@ -54,7 +54,8 @@ class Prompter:
             await asyncio.sleep(self.delay)
         if self.answer in ("decline", "cancel"):
             return ElicitResult(action=self.answer)
-        return self.answer
+        # Submit = allow; the checkbox says whether to remember it.
+        return {"remember_until_restart": self.answer == "Allow until restart"}
 
 
 async def _run(client, command, cwd=".", **kw):
@@ -278,3 +279,22 @@ def test_new_server_gets_new_dashboard_token(tmp_path):
     first = APPROVALS.dashboard_token
     _app(tmp_path)
     assert APPROVALS.dashboard_token != first
+
+
+async def test_prompt_is_a_single_checkbox_not_a_dropdown(tmp_path):
+    """A choice list renders as a dropdown/picker sheet; a checkbox doesn't."""
+    seen = {}
+
+    async def handler(message, response_type, params, context):
+        seen["schema"] = params.requestedSchema
+        seen["message"] = message
+        return {}
+
+    async with Client(_app(tmp_path), elicitation_handler=handler) as client:
+        assert "plain-submit" in _text(await _run(client, "echo plain-submit"))
+    props = seen["schema"]["properties"]
+    assert list(props) == ["remember_until_restart"]
+    assert props["remember_until_restart"]["type"] == "boolean"
+    assert props["remember_until_restart"].get("default") is False
+    assert "enum" not in str(seen["schema"]) and not seen["schema"].get("required")
+    assert "echo plain-submit" in seen["message"] and "Submit allows it once" in seen["message"]
