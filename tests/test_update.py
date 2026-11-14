@@ -103,6 +103,9 @@ def test_run_update_signals_servers(tmp_path, monkeypatch):
     monkeypatch.setattr(update, "detect_install", lambda: update.InstallMethod("uv-tool"))
     monkeypatch.setattr(update, "update_command", lambda m, ref: [sys.executable, "-c", "pass"])
     monkeypatch.setattr(update, "find_servers", lambda: [(dummy.pid, ["x", "-t", "http"])])
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    (update._marker_dir()).mkdir(parents=True)
+    (update._marker_dir() / str(dummy.pid)).write_text("x")
     assert update.run_update("main") == 0
     dummy.wait(timeout=10)
     assert flag.read_text() == "hup"
@@ -149,6 +152,7 @@ async def test_sighup_restarts_server_in_place(tmp_path):
             raise AssertionError("server did not come up")
 
         assert await wait_up() > 50
+        assert update._is_restartable(proc.pid)  # registered itself
         os.kill(proc.pid, signal.SIGHUP)
         await anyio.sleep(update.RESTART_DELAY_S + 0.5)
         assert proc.poll() is None  # same process, still running
@@ -166,3 +170,22 @@ def test_version_flag(capsys):
 
     main(["--version"])
     assert capsys.readouterr().out.strip() == update.installed_version()
+
+
+@posix_only
+def test_run_update_never_signals_servers_without_restart_support(tmp_path, monkeypatch, capsys):
+    """An older server has no SIGHUP handler: SIGHUP would kill it, not restart it."""
+    old = subprocess.Popen([sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)"],
+                           stdout=subprocess.PIPE, text=True)
+    assert old.stdout.readline().strip() == "ready"
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))  # no marker for it
+    monkeypatch.setattr(update, "detect_install", lambda: update.InstallMethod("uv-tool"))
+    monkeypatch.setattr(update, "update_command", lambda m, ref: [sys.executable, "-c", "pass"])
+    monkeypatch.setattr(update, "find_servers", lambda: [(old.pid, ["x", "-t", "http"])])
+    try:
+        assert update.run_update("main") == 0
+        time.sleep(0.5)
+        assert old.poll() is None, "older server was killed"
+        assert "older version" in capsys.readouterr().err
+    finally:
+        old.kill()

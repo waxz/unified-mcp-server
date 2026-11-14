@@ -94,7 +94,9 @@ approve `unified-mcp-server --update` and the server restarts itself.
 - `--update <branch|tag|commit>`: install a specific version.
 - `--no-restart`: reinstall only; restart later with `kill -HUP <pid>`.
 - Only servers started with `-t http` are restarted (a stdio server would
-  lose its client). An editable install from a checkout refuses to update:
+  lose its client), and only ones that registered for it at startup. A
+  server started by a version without `--update` is never signalled (it
+  would be terminated rather than restarted); restart that one yourself once. An editable install from a checkout refuses to update:
   `git pull` there instead.
 
 After a restart: approvals given "until restart" are gone, the dashboard link

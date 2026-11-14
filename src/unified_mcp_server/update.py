@@ -32,6 +32,25 @@ DIST = "unified-mcp-server"
 RESTART_DELAY_S = 2.0
 
 
+def _marker_dir() -> Path:
+    """Where servers that can restart in place register their PID."""
+    base = os.environ.get("XDG_RUNTIME_DIR") or str(Path.home() / ".cache")
+    return Path(base) / "unified-mcp-server" / "restartable"
+
+
+def _register_restartable() -> None:
+    d = _marker_dir()
+    try:
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (d / str(os.getpid())).write_text(" ".join(sys.argv))
+    except OSError as exc:
+        logger.info("Couldn't register for in-place restart: %s", exc)
+
+
+def _is_restartable(pid: int) -> bool:
+    return (_marker_dir() / str(pid)).is_file()
+
+
 def installed_version() -> str:
     try:
         return metadata.version(DIST)
@@ -142,8 +161,9 @@ def run_update(ref: str = "main", restart: bool = True) -> int:
     if done.returncode != 0:
         print(f"error: update failed (exit {done.returncode}); nothing was restarted", file=sys.stderr)
         return done.returncode
-    print("Installed. Restart servers started before this update to use it.", file=sys.stderr)
+    print("Installed.", file=sys.stderr)
     if not restart:
+        print("Restart running servers to use it (kill -HUP <pid> restarts one in place).", file=sys.stderr)
         return 0
     if not hasattr(signal, "SIGHUP"):
         print("Restart the server yourself (no in-place restart on this platform).", file=sys.stderr)
@@ -152,6 +172,12 @@ def run_update(ref: str = "main", restart: bool = True) -> int:
     if not servers:
         print("No running HTTP server found to restart.", file=sys.stderr)
     for pid, args in servers:
+        if not _is_restartable(pid):
+            # Started by an older version without the SIGHUP handler: SIGHUP
+            # would terminate it rather than restart it.
+            print(f"pid {pid} can't restart in place (started by an older version); restart it "
+                  f"yourself: {' '.join(args[1:])}", file=sys.stderr)
+            continue
         try:
             os.kill(pid, signal.SIGHUP)
             print(f"Restarting pid {pid} in place (back in a few seconds): {' '.join(args[1:])}",
@@ -193,4 +219,8 @@ def install_restart_handler(delay: float = RESTART_DELAY_S) -> bool:
         timer.start()
 
     signal.signal(signal.SIGHUP, on_hup)
+    _register_restartable()
+    import atexit
+
+    atexit.register(lambda: (_marker_dir() / str(os.getpid())).unlink(missing_ok=True))
     return True
