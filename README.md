@@ -88,7 +88,8 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `--public-url URL` | base URL for patch-preview links (`PUBLIC_URL`) |
 | `--in-docker` | server runs in a container; run commands directly (`IS_IN_DOCKER`) |
 | `--no-approval` | refuse untrusted commands instead of asking you (`APPROVE_UNTRUSTED = false`) |
-| `--approval-timeout SECONDS` | how long to wait for your approval (`APPROVAL_TIMEOUT`, default 30) |
+| `--approval-timeout SECONDS` | how long an approval request stays open (`APPROVAL_TIMEOUT`, default 600) |
+| `--approval-wait SECONDS` | how long one tool call waits before returning "pending" (`APPROVAL_WAIT`, default 25) |
 | `--allow-host-tmux-input` | let `tmux_send_keys` type into host sessions (`ALLOW_HOST_TMUX_INPUT`; runs arbitrary commands) |
 
 Precedence: installed default config → your config file → CLI flags.
@@ -142,20 +143,31 @@ this server doesn't know are logged and ignored.
 - `TRUSTED_COMMANDS` run directly on the host, by name:
   `execute_command(command="t_test", cwd=".")`.
 - Any other command, when no sandbox is configured, needs **your approval**
-  (`APPROVE_UNTRUSTED = true`, the default):
-  - your MCP client shows an allow/deny prompt, if it supports MCP
-    elicitation;
-  - over HTTP, the server log also prints a link to an allow/deny page. The
-    link carries a one-time token and is never sent to the model, so the
-    model can't approve its own request.
+  (`APPROVE_UNTRUSTED = true`, the default). Answer wherever is handiest:
+  - **Approvals dashboard** (HTTP): the server prints its link once at
+    startup. Keep the tab open: it lists every waiting request, updates by
+    itself, shows the count in the tab title, and lets you revoke commands
+    you allowed earlier. The link changes on every restart.
+  - **Your MCP client's prompt**, if it supports MCP elicitation.
+  - **A per-request link** printed in the server log with each request.
 
-  Whichever you answer first wins. No answer within `APPROVAL_TIMEOUT`
-  seconds (default 30) denies the command. An approved command (same command,
-  shell and working directory) stays allowed until the server restarts;
-  nothing is written to `config.toml`. The working directory must still be
-  inside the allowed roots. `--no-approval` refuses untrusted commands
-  instead. Over stdio with a client that can't show prompts, there is no way
-  to approve, so the command is refused; use `TRUSTED_COMMANDS` there.
+  Answers: **Allow once**, **Allow until restart** (the same command, shell
+  and working directory then run without asking until the server restarts),
+  or **Deny**. Nothing is written to `config.toml`.
+
+  A request stays open for `APPROVAL_TIMEOUT` seconds (default 600). A tool
+  call waits up to `APPROVAL_WAIT` seconds (default 25) for your answer; if
+  you haven't answered yet it returns "approval pending" without running
+  anything, and the model calls again with the same arguments once you have.
+  While your client is showing its own prompt, the call waits for that answer
+  instead.
+
+  Links carry random tokens and appear only in the server's log, never in what
+  the model sees, so the model can't approve its own requests. Keep that log
+  outside the folders the file tools can read. The working directory must
+  still be inside the allowed roots. `--no-approval` refuses untrusted
+  commands instead. Over stdio with a client that can't show prompts there is
+  no way to approve, so the command is refused; use `TRUSTED_COMMANDS` there.
 - With a sandbox configured (`[DOCKER_CONFIG.<os>] work_dir`), other
   commands run in it through the external `drun` helper (expected in
   `~/.bashrc`) instead of asking for approval.

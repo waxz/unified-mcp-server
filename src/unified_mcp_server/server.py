@@ -163,6 +163,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     app = build_server(settings)
     _install_disconnect_guard()
 
+    if settings.ENABLE_SHELL and settings.APPROVE_UNTRUSTED and not settings.IS_IN_DOCKER:
+        from .shell.approvals import dashboard_url
+
+        url = dashboard_url()
+        if url:
+            # Only here, in the server's own log: the model must not see this link.
+            logger.warning("Approvals dashboard (keep it open; new link on every restart): %s", url)
+
     if settings.TRANSPORT == "http":
         app.run(transport="http", host=settings.HOST, port=settings.PORT, path=settings.PATH)
     else:

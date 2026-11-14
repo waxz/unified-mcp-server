@@ -30,12 +30,13 @@ IS_IN_DOCKER = false
 # TRUSTED_COMMANDS.
 ALLOW_HOST_TMUX_INPUT = false
 # A command that isn't in TRUSTED_COMMANDS (and no sandbox is configured) can
-# still run if you approve it: in your MCP client when it supports prompts,
-# or on an approval page whose link is printed in this server's log (HTTP
-# only; the model never sees it). No answer within APPROVAL_TIMEOUT seconds
-# denies it. Approved commands stay allowed until the server restarts.
+# still run if you approve it: in your MCP client when it shows prompts, or on
+# the approvals dashboard, whose link this server prints in its log at startup
+# (HTTP only; the model never sees it). Answers: allow once, allow until
+# restart, or deny.
 APPROVE_UNTRUSTED = true
-APPROVAL_TIMEOUT = 30
+APPROVAL_TIMEOUT = 600         # seconds a request stays open before it's denied
+APPROVAL_WAIT = 25             # seconds one tool call waits before saying "pending"
 
 # ---- tool families --------------------------------------------------------------
 [UNIFIED]
