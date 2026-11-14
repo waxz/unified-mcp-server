@@ -18,6 +18,10 @@ The code started as two separate servers,
 [shell-mcp-server](https://github.com/waxz/shell-mcp-server). It is copied
 into this package and maintained here; neither project is a dependency.
 
+**New here? See [docs/USAGE.md](docs/USAGE.md)** for recommended setup, how to
+run and approve shell commands, keeping secrets away from the model, and
+upgrading/restarting safely.
+
 ## Install
 
 One line installs [uv](https://docs.astral.sh/uv/) (which fetches Python 3.12
@@ -88,6 +92,8 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `--public-url URL` | base URL for patch-preview links (`PUBLIC_URL`) |
 | `--in-docker` | server runs in a container; run commands directly (`IS_IN_DOCKER`) |
 | `--no-approval` | refuse untrusted commands instead of asking you (`APPROVE_UNTRUSTED = false`) |
+| `PROTECTED_PATHS` (config only) | files/folders the file tools must never touch; the loaded config file is always protected |
+| `COMMAND_TIMEOUT_MAX` (config only) | largest per-call `timeout` for `execute_command` (default 600) |
 | `--approval-timeout SECONDS` | how long an approval request stays open (`APPROVAL_TIMEOUT`, default 600) |
 | `--approval-wait SECONDS` | how long one tool call waits before returning "pending" (`APPROVAL_WAIT`, default 25) |
 | `--allow-host-tmux-input` | let `tmux_send_keys` type into host sessions (`ALLOW_HOST_TMUX_INPUT`; runs arbitrary commands) |
@@ -214,6 +220,10 @@ this server doesn't know are logged and ignored.
   configured, and raised when no tmux server was running. It now checks the
   sandbox only when one exists, returns `[]` with no server, and drops blank
   names. *(shell/tool_handlers.py)*
+- Failed commands came back as a Python list repr
+  (`['…', '[exit code: 1]']`) with the timeout note twice; they are now plain
+  text. A client disconnect raised a validation error instead of returning.
+  *(common/mcp_types_utils.py, shell/tool_handlers.py)*
 - `remove_directory` and recursive `delete_file` used
   `shutil.rmtree(onexc=...)`, which needs Python 3.12. They now work on 3.11.
   *(files/file_operations.py)*

@@ -150,16 +150,22 @@ async def test_tmux_list_session_without_server_namespaced(tmp_path, monkeypatch
 
 
 # ------------------------------------------------- latent bugs found in copy
-def test_timeout_result_message_does_not_crash():
-    """create_shell_result referenced `config` without importing it."""
+def test_failed_command_error_is_plain_text():
+    """Errors used to be a Python list repr: ['...', '[exit code: 1]']."""
+    from fastmcp.exceptions import ToolError
+
     from unified_mcp_server.common.mcp_types_utils import create_shell_result
     from unified_mcp_server.common.models import ExecutionResult
 
     load_settings(["-c", "none.toml"])
-    res = create_shell_result(
-        ExecutionResult(stdout="ok", exit_code=0, command="x", shell="bash", cwd=".", timed_out=True)
-    )
-    assert "timed out after" in res.text
+    with pytest.raises(ToolError) as exc:
+        create_shell_result(
+            ExecutionResult(stdout="partial\n", stderr="boom\n[Timed out after 1s]", exit_code=-15,
+                            command="x", shell="bash", cwd=".", timed_out=True)
+        )
+    text = str(exc.value)
+    assert text == "partial\n\n[stderr]\nboom\n[Timed out after 1s]\n\n[exit code: -15]"
+    assert text.count("Timed out") == 1 and "['" not in text
 
 
 def test_env_vars_do_not_leak_into_settings(monkeypatch):
@@ -282,3 +288,38 @@ def test_allow_host_tmux_input_flag_and_default(tmp_path):
     assert load_settings(["-c", str(tmp_path / "none.toml")]).ALLOW_HOST_TMUX_INPUT is False
     s = load_settings(["-c", str(tmp_path / "none.toml"), "--allow-host-tmux-input"])
     assert s.ALLOW_HOST_TMUX_INPUT is True
+
+
+# ------------------------------------------------------ protected files
+async def test_file_tools_cannot_touch_the_config_file(tmp_path):
+    project = tmp_path / "p"
+    project.mkdir()
+    secrets_dir = project / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "token.txt").write_text("TOKEN-xyz\n")
+    cfg = project / "config.toml"
+    cfg.write_text('API_KEYS = "SECRET-KEY-123"\nPROTECTED_PATHS = ["secrets"]\n')
+    (project / "ok.txt").write_text("SECRET-KEY-123 is mentioned here too\n")
+    app = build_server(load_settings(["-c", str(cfg), "-w", str(project)]))
+    async with Client(app) as client:
+        for tool, args in [
+            ("read_file", {"path": "config.toml"}),
+            ("read_file", {"path": str(cfg)}),
+            ("write_file", {"path": "config.toml", "content": "API_KEYS = ''"}),
+            ("delete_file", {"path": "config.toml"}),
+            ("read_file", {"path": "secrets/token.txt"}),
+            ("get_file_info", {"path": "config.toml"}),
+        ]:
+            res = await client.call_tool(tool, args, raise_on_error=False)
+            assert res.is_error, f"{tool} {args} was allowed"
+        found = await client.call_tool("search_files", {"pattern": "SECRET-KEY-123|TOKEN-xyz"})
+        files = {r["file_relative"] for r in found.structured_content["results"]}
+        assert files == {"ok.txt"}
+        listing = await client.call_tool("list_files", {"path": ".", "recursive": True})
+        names = "".join(c.text for c in listing.content)
+        assert "token.txt" not in names
+        # Other files still work.
+        assert "mentioned" in "".join(
+            c.text for c in (await client.call_tool("read_file", {"path": "ok.txt"})).content
+        )
+    assert "SECRET-KEY-123" in cfg.read_text()  # untouched

@@ -113,10 +113,17 @@ class Settings(BaseModel):
     CONFIG: Dict[str, Any] = Field(default_factory=dict)
     WORK_DIR: str | None = None
     ALLOWED_DIRECTORIES: list[str] = Field(default_factory=list)
+    #: Files/folders the file tools must never touch (read, list, search, write).
+    #: The loaded config file (it holds API keys) is always added.
+    PROTECTED_PATHS: list[str] = Field(default_factory=list)
+    #: The config file this server loaded, if any (set by load_settings).
+    CONFIG_FILE: str | None = None
     IS_GIT_INSTALLED: bool = Field(default_factory=lambda: check_installed("git"))
 
     # ---- shell tools
     COMMAND_TIMEOUT: int = 30
+    #: Largest per-call timeout execute_command accepts.
+    COMMAND_TIMEOUT_MAX: int = 600
     SAFETY_MODE: str = "strict"
     IS_IN_DOCKER: bool = False
     IS_TMUX_INSTALLED: bool = Field(default_factory=lambda: check_installed("tmux"))
@@ -254,6 +261,11 @@ class Settings(BaseModel):
         utils.PROJECT_DIR = (
             work_dir if utils.is_within_allowed_directories(work_dir, allowed) else allowed[0]
         )
+
+        protected = [p for p in [*self.PROTECTED_PATHS, self.CONFIG_FILE] if p]
+        utils.PROTECTED_PATHS = [
+            Path(get_platform_path(p, self.PLATFORM, self.WORK_DIR)).resolve() for p in protected
+        ]
 
     def _validate_shells(self) -> None:
         for name, path in self.ALLOWED_SHELLS.items():
@@ -540,6 +552,7 @@ def load_settings(argv: Sequence[str] | None = None) -> Settings:
     config_file = resolve_config_file(args.config)
     if config_file is not None:
         merged.update(_load_toml(config_file))
+        merged["CONFIG_FILE"] = str(Path(config_file).resolve())
     SETTINGS = Settings.from_mapping(merged, args)
     return SETTINGS
 

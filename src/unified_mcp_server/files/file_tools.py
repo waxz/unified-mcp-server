@@ -86,6 +86,8 @@ def walk_with_depth(
 
         try:
             for item in current_path.iterdir():
+                if not _is_safe_local_entry(item):
+                    continue
                 if item.is_file() and item.match(pattern):
                     yield item
                 elif item.is_dir() and not item.name.startswith("."):

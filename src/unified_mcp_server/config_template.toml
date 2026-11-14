@@ -38,6 +38,10 @@ APPROVE_UNTRUSTED = true
 APPROVAL_TIMEOUT = 600         # seconds a request stays open before it's denied
 APPROVAL_WAIT = 25             # seconds one tool call waits before saying "pending"
 
+# Files/folders the file tools must never read, list, search or write.
+# This config file is always protected (it holds API_KEYS).
+# PROTECTED_PATHS = [".env", "secrets"]
+
 # ---- tool families --------------------------------------------------------------
 [UNIFIED]
 namespaced = false             # true -> tools are named fs_* and shell_*

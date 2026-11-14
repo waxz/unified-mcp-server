@@ -461,3 +461,36 @@ class TestTmuxTools:
 
     async def test_list_sessions_rejects_unknown_shell(self, client):
         await call_error(client, "tmux_list_session", {"shell": "zsh-nope"})
+
+
+# --------------------------------------------- timeouts and long output
+async def test_per_call_timeout(client):
+    res = await client.call_tool(
+        "execute_command", {"command": "t_sleep", "cwd": ".", "timeout": 1}, raise_on_error=False
+    )
+    text = "".join(c.text for c in res.content)
+    assert res.is_error and "Timed out after 1s" in text and "['" not in text
+    res = await client.call_tool(
+        "execute_command", {"command": "t_echo", "cwd": ".", "timeout": 100000}, raise_on_error=False
+    )
+    assert res.is_error and "timeout must be between" in "".join(c.text for c in res.content)
+
+
+async def test_failed_command_is_readable(client):
+    res = await client.call_tool("execute_command", {"command": "t_fail", "cwd": "."}, raise_on_error=False)
+    text = "".join(c.text for c in res.content)
+    assert res.is_error and text.endswith("[exit code: 3]") and "['" not in text
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
+async def test_tmux_get_output_scrollback(client, ready_tmux_session):
+    session = ready_tmux_session
+    await call(client, "tmux_send_keys", {"session_name": session,
+                                          "keys": "for i in $(seq 1 150); do echo line-$i; done"})
+    out = await _wait_for_output(client, session, lambda o: "line-150" in o)
+    assert "line-150" in out and "line-1\n" not in out  # visible screen only
+    full = await call(client, "tmux_get_output", {"session_name": session, "lines": 400})
+    assert "line-1\n" in full and "line-150" in full
+    res = await client.call_tool("tmux_get_output", {"session_name": session, "lines": 99999},
+                                 raise_on_error=False)
+    assert res.is_error

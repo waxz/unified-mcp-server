@@ -113,6 +113,11 @@ BASE_DIR: Optional[Path] = None
 # Global project directory: single authoritative local root for path safety/routing
 PROJECT_DIR: Optional[Path] = None
 
+# Resolved paths the file tools must never touch (the config file holding API
+# keys, plus PROTECTED_PATHS). Checked by is_safe_path, which every file tool
+# and directory walker goes through.
+PROTECTED_PATHS: list[Path] = []
+
 # Global file operations backend and SSH manager
 FILE_OPS: FileOperationsInterface = LocalFileOperations()
 SSH_MANAGER = SSHConnectionManager()
@@ -197,9 +202,20 @@ def is_safe_path(path: Path) -> bool:
             return False
         resolved = path.resolve()
         project_resolved = PROJECT_DIR.resolve()
-        return resolved.is_relative_to(project_resolved)
+        if not resolved.is_relative_to(project_resolved):
+            return False
+        return not is_protected(resolved)
     except (ValueError, RuntimeError):
         return False
+
+
+def is_protected(path: Path) -> bool:
+    """True for a protected file, or anything inside a protected folder."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return True
+    return any(resolved == p or resolved.is_relative_to(p) for p in PROTECTED_PATHS)
 
 
 def resolve_path(path: str, work_dir: str | None = None) -> Path:
