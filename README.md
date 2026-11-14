@@ -87,6 +87,7 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `--safety-mode strict\|relax` | shell safety mode (`SAFETY_MODE`) |
 | `--public-url URL` | base URL for patch-preview links (`PUBLIC_URL`) |
 | `--in-docker` | server runs in a container; run commands directly (`IS_IN_DOCKER`) |
+| `--allow-host-tmux-input` | let `tmux_send_keys` type into host sessions (`ALLOW_HOST_TMUX_INPUT`; runs arbitrary commands) |
 
 Precedence: installed default config → your config file → CLI flags.
 Environment variables are not read.
@@ -147,6 +148,10 @@ this server doesn't know are logged and ignored.
   the other tmux tools act on those directly. Any other session name is
   treated as a sandbox session, so without a sandbox configured those calls
   return an error. Your own tmux sessions aren't reachable.
+- `tmux_send_keys` can't type into host (`native_mcp_*`) sessions unless
+  `ALLOW_HOST_TMUX_INPUT = true` (or `--allow-host-tmux-input`). Typing into a
+  host shell runs any command, which would bypass `TRUSTED_COMMANDS`, so it is
+  off by default.
 
 ## Changes from the original projects
 

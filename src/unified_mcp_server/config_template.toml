@@ -25,6 +25,10 @@ SAFETY_MODE = "strict"         # "strict" forces bash for untrusted commands
 # false on a host: only TRUSTED_COMMANDS run directly; anything else needs the
 # `drun` sandbox helper.
 IS_IN_DOCKER = false
+# Let tmux_send_keys type into host (native_mcp_*) tmux sessions. Off by
+# default: a client could then run any command on this machine, bypassing
+# TRUSTED_COMMANDS.
+ALLOW_HOST_TMUX_INPUT = false
 
 # ---- tool families --------------------------------------------------------------
 [UNIFIED]

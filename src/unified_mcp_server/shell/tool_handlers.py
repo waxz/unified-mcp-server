@@ -362,9 +362,20 @@ def register_tools(server: FastMCP) -> None:
         ctx: Context,
         shell: str = "bash",
     ) -> list[types.TextContent]:
-        """Send keys to a tmux session by validated name."""
+        """Type keys into a tmux session.
+
+        Host sessions (native_mcp_*) are a shell on this machine, so typing into
+        them would run arbitrary commands and bypass TRUSTED_COMMANDS. That is
+        refused unless ALLOW_HOST_TMUX_INPUT is enabled.
+        """
 
         is_trusted, cwd = _tmux_session_target(session_name)
+        if is_trusted and not config.SETTINGS.ALLOW_HOST_TMUX_INPUT:
+            raise ValueError(
+                f"Typing into host tmux session '{session_name}' is disabled: it would run "
+                "arbitrary commands on this machine, bypassing TRUSTED_COMMANDS. Enable it "
+                "with ALLOW_HOST_TMUX_INPUT = true (or --allow-host-tmux-input)."
+            )
         req = TmuxSessionInput(session_name=session_name, cwd=cwd, shell=shell)
 
         return await _execute_with_stream(
