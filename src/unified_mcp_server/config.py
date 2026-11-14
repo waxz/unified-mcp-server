@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = str(
     importlib.resources.files("unified_mcp_server").joinpath("default_config.toml")
 )
+CONFIG_TEMPLATE_PATH = str(
+    importlib.resources.files("unified_mcp_server").joinpath("config_template.toml")
+)
 
 _VIRTUAL_SHELL_ALIASES = {
     "bash", "sh", "cmd", "cmd.exe", "powershell", "powershell.exe",
@@ -398,12 +401,56 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--in-docker", action="store_true", default=None,
                         help="The server runs inside a container: run all commands "
                         "directly (IS_IN_DOCKER)")
+    parser.add_argument(
+        "--init-config", nargs="?", const="config.toml", default=None, metavar="PATH",
+        help="Write a commented config template with a freshly generated API key to "
+        "PATH (default: config.toml; '-' prints it) and exit",
+    )
+    parser.add_argument("--force", action="store_true",
+                        help="With --init-config: overwrite an existing file")
     return parser
 
 
 def _load_toml(path: str | Path) -> dict[str, Any]:
     p = Path(path)
     return toml.load(p) if p.is_file() else {}
+
+
+def render_config_template() -> tuple[str, str]:
+    """Return (template text with a new API key filled in, the key)."""
+    import secrets
+
+    key = secrets.token_urlsafe(32)
+    text = Path(CONFIG_TEMPLATE_PATH).read_text(encoding="utf-8").replace("__API_KEY__", key)
+    return text, key
+
+
+def write_config_template(target: str, force: bool = False) -> Path | None:
+    """Write the config template to ``target`` ('-' for stdout).
+
+    The file holds an API key, so it is created readable by its owner only.
+    Returns the written path, or None when printed to stdout.
+    """
+    import os
+    import sys
+
+    text, _key = render_config_template()
+    if target == "-":
+        sys.stdout.write(text)
+        return None
+    path = Path(target).expanduser()
+    if path.exists() and not force:
+        raise FileExistsError(f"{path} already exists; pass --force to overwrite it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    try:
+        os.chmod(path, 0o600)  # also tighten an overwritten, pre-existing file
+    except OSError:
+        pass
+    return path
 
 
 def resolve_config_file(requested: str | None) -> Path | None:

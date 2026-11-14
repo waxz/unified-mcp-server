@@ -73,7 +73,8 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 
 | Flag | Meaning |
 |---|---|
-| `-c/--config` | TOML config; see `config.example.toml`. Optional (see below) |
+| `-c/--config` | TOML config. Optional (see below) |
+| `--init-config [PATH]` | write a commented config template to PATH (default `config.toml`, `-` prints it) and exit; `--force` overwrites |
 | `-t/--transport` | `stdio` or `http` |
 | `-H/--host`, `-P/--port`, `-p/--path` | HTTP bind settings |
 | `-w/--workdir` | project directory |
@@ -109,10 +110,20 @@ Arguments are visible to other users on the same machine (for example in
 
 ## Configuration
 
-`config.example.toml` lists every option. Config files written for either
-original project use the same format and load as they are, as long as the
-directories they name exist on this machine. Keys this server doesn't know
-are logged and ignored.
+Generate a starting config with every option documented:
+
+```bash
+unified-mcp-server --init-config            # writes ./config.toml
+unified-mcp-server -c config.toml -t http
+```
+
+The template fills in a freshly generated API key, so the file is created
+readable by you only (mode 600). It won't overwrite an existing file unless
+you pass `--force`. `--init-config -` prints the template instead.
+
+Config files written for either original project use the same format and load
+as they are, as long as the directories they name exist on this machine. Keys
+this server doesn't know are logged and ignored.
 
 - **Project directory.** `[CONFIG.<os>] work_dir` / `-w` sets the root for
   file tools. Unless `[DOCKER_CONFIG.<os>] host_root` is set, shell commands
@@ -132,6 +143,10 @@ are logged and ignored.
 - Set `IS_IN_DOCKER = true` when the server itself runs inside a container:
   every command then runs directly in it.
 - `SAFETY_MODE = "strict"` forces `bash` for untrusted commands.
+- tmux: `tmux_execute` creates host sessions named `native_mcp_<name>`, and
+  the other tmux tools act on those directly. Any other session name is
+  treated as a sandbox session, so without a sandbox configured those calls
+  return an error. Your own tmux sessions aren't reachable.
 
 ## Changes from the original projects
 
@@ -153,6 +168,10 @@ are logged and ignored.
   killing the shell and the tmux server. This failed every time on GitHub
   runners. The bootstrap now waits for the pane's prompt and the reset no
   longer sends `C-c`. *(shell/tmux_commands.py)*
+- `tmux_get_output`, `tmux_send_keys` and `tmux_kill_session` crashed
+  (`cwd=None`) or failed with "Directory not allowed" on any session not
+  named `native_mcp_*` when no sandbox was configured. They now return an
+  error that explains why. *(shell/tool_handlers.py)*
 - `tmux_list_session` crashed with `cwd=None` when no sandbox work dir was
   configured, and raised when no tmux server was running. It now checks the
   sandbox only when one exists, returns `[]` with no server, and drops blank

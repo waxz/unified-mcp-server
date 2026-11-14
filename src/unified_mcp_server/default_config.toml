@@ -1,5 +1,6 @@
 # Built-in defaults for unified-mcp-server. Override any key in your own
-# config.toml (passed with -c). See config.example.toml for every option.
+# config.toml (passed with -c). `unified-mcp-server --init-config` writes a
+# commented template with every option.
 TRANSPORT = "stdio"
 HOST = "127.0.0.1"
 PORT = 8000
