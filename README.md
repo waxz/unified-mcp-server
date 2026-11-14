@@ -73,7 +73,7 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 
 | Flag | Meaning |
 |---|---|
-| `-c/--config` | TOML config (default `config.toml`; see `config.example.toml`) |
+| `-c/--config` | TOML config; see `config.example.toml`. Optional (see below) |
 | `-t/--transport` | `stdio` or `http` |
 | `-H/--host`, `-P/--port`, `-p/--path` | HTTP bind settings |
 | `-w/--workdir` | project directory |
@@ -81,9 +81,31 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `--shell NAME PATH` | shell mapping for shell tools (repeatable) |
 | `--namespaced` | prefix tools with `fs_` / `shell_` |
 | `--no-files` / `--no-shell` | disable one family |
+| `--api-key KEY` | API key for HTTP clients (repeatable; replaces `API_KEYS`) |
+| `--command-timeout SECONDS` | shell command timeout (`COMMAND_TIMEOUT`) |
+| `--safety-mode strict\|relax` | shell safety mode (`SAFETY_MODE`) |
+| `--public-url URL` | base URL for patch-preview links (`PUBLIC_URL`) |
+| `--in-docker` | server runs in a container; run commands directly (`IS_IN_DOCKER`) |
 
-Precedence: built-in defaults → config file → CLI flags. Environment variables
-are not read.
+Precedence: installed default config → your config file → CLI flags.
+Environment variables are not read.
+
+A config file is optional. Which one is used:
+
+- `-c FILE` that exists: that file.
+- `-c FILE` that doesn't exist: a warning names the missing file, and the
+  installed default config is used.
+- no `-c`: `./config.toml` if it exists, otherwise the installed default config.
+
+So a quick HTTP server with a key needs no file at all:
+
+```bash
+unified-mcp-server -t http -H 127.0.0.1 -P 8000 -p /mcp --api-key change-me
+```
+
+Arguments are visible to other users on the same machine (for example in
+`ps`), so on shared machines put `API_KEYS` in a config file instead of using
+`--api-key`. Trusted shell commands can only be defined in a config file.
 
 ## Configuration
 

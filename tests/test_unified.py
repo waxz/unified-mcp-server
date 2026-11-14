@@ -180,3 +180,91 @@ async def test_cli_entry_point_over_stdio(tmp_path):
         assert {"read_file", "execute_command"} <= names
         await client.call_tool("write_file", {"path": "x.txt", "content": "via stdio"})
     assert (project / "x.txt").read_text() == "via stdio"
+
+
+# ------------------------------------------------- config file resolution
+def test_missing_config_file_warns_and_uses_installed_default(tmp_path, caplog):
+    import logging
+
+    from unified_mcp_server.config import DEFAULT_CONFIG_PATH
+
+    missing = tmp_path / "nope.toml"
+    with caplog.at_level(logging.WARNING, logger="unified_mcp_server.config"):
+        s = load_settings(["-c", str(missing), "-w", str(tmp_path)])
+    warning = " ".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    assert "nope.toml not found" in warning and DEFAULT_CONFIG_PATH in warning
+    assert s.PORT == 8000 and s.PATH == "/mcp"  # installed defaults applied
+
+
+def test_no_config_flag_uses_local_config_toml(tmp_path, monkeypatch):
+    (tmp_path / "config.toml").write_text('PORT = 9123\n')
+    monkeypatch.chdir(tmp_path)
+    assert load_settings([]).PORT == 9123
+
+
+def test_no_config_flag_and_no_local_file_uses_defaults(tmp_path, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.chdir(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="unified_mcp_server.config"):
+        s = load_settings([])
+    assert s.PORT == 8000
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]  # not an error case
+
+
+# ------------------------------------------------------------ CLI overrides
+def test_cli_flags_override_config_file(tmp_path):
+    cfg = _write_config(
+        tmp_path,
+        'API_KEYS = "from-file"\nCOMMAND_TIMEOUT = 30\nSAFETY_MODE = "strict"\n',
+    )
+    s = load_settings([
+        "-c", cfg, "-w", str(tmp_path),
+        "--api-key", "cli-1", "--api-key", "cli-2",
+        "--command-timeout", "5", "--safety-mode", "relax",
+        "--public-url", "https://mcp.example",
+    ])
+    assert s.api_keys == frozenset({"cli-1", "cli-2"})
+    assert s.COMMAND_TIMEOUT == 5 and s.SAFETY_MODE == "relax"
+    assert s.PUBLIC_URL == "https://mcp.example"
+
+
+def test_config_file_values_kept_without_cli_flags(tmp_path):
+    cfg = _write_config(tmp_path, 'API_KEYS = "from-file"\nCOMMAND_TIMEOUT = 12\n')
+    s = load_settings(["-c", cfg, "-w", str(tmp_path)])
+    assert s.api_keys == frozenset({"from-file"}) and s.COMMAND_TIMEOUT == 12
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--safety-mode", "yolo"], ["--command-timeout", "abc"], ["--command-timeout", "0"]],
+)
+def test_invalid_cli_values_rejected(tmp_path, argv):
+    with pytest.raises((SystemExit, ValueError)):
+        load_settings(["-c", str(tmp_path / "none.toml"), *argv])
+
+
+async def test_api_key_flag_protects_http(tmp_path):
+    """--api-key alone (no config file) turns on auth."""
+    port = _free_port()
+    project = tmp_path / "project"
+    project.mkdir()
+    app = build_server(load_settings([
+        "-c", str(tmp_path / "none.toml"), "-w", str(project),
+        "-t", "http", "-H", "127.0.0.1", "-P", str(port), "--api-key", "flag-key",
+    ]))
+    url = f"http://127.0.0.1:{port}/mcp"
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(lambda: app.run_http_async(host="127.0.0.1", port=port, path="/mcp", show_banner=False))
+        for _ in range(100):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                    break
+            except OSError:
+                await anyio.sleep(0.05)
+        async with Client(StreamableHttpTransport(url, headers={"x-api-key": "flag-key"})) as c:
+            await c.call_tool("get_project_directory", {})
+        async with Client(StreamableHttpTransport(url)) as c:
+            with pytest.raises(Exception):
+                await c.call_tool("get_project_directory", {})
+        tg.cancel_scope.cancel()

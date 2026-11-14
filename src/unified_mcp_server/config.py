@@ -334,6 +334,16 @@ class Settings(BaseModel):
             merged["ENABLE_FILES"] = False
         if getattr(args, "no_shell", False):
             merged["ENABLE_SHELL"] = False
+        if getattr(args, "api_key", None):
+            merged["API_KEYS"] = ",".join(args.api_key)
+        if getattr(args, "command_timeout", None) is not None:
+            merged["COMMAND_TIMEOUT"] = args.command_timeout
+        if getattr(args, "safety_mode", None):
+            merged["SAFETY_MODE"] = args.safety_mode
+        if getattr(args, "public_url", None):
+            merged["PUBLIC_URL"] = args.public_url
+        if getattr(args, "in_docker", None):
+            merged["IS_IN_DOCKER"] = True
 
         # The sandbox's own dirs are always allowed inside the sandbox.
         host_root = merged.get("DOCKER_SANDBOX_HOST_ROOT")
@@ -354,7 +364,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="unified-mcp-server",
         description="One MCP server with file-editing and shell-execution tools.",
     )
-    parser.add_argument("-c", "--config", default="config.toml", help="Config file (TOML)")
+    parser.add_argument(
+        "-c", "--config", default=None,
+        help="Config file (TOML). Default: ./config.toml if it exists, else the installed "
+        "default config. A missing file is reported and the installed default is used.",
+    )
     parser.add_argument("-t", "--transport", choices=["stdio", "http"], default=None)
     parser.add_argument("-H", "--host", default=None)
     parser.add_argument("-P", "--port", type=int, default=None)
@@ -369,6 +383,21 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Prefix tool names with 'fs_' and 'shell_'")
     parser.add_argument("--no-files", action="store_true", help="Disable file tools")
     parser.add_argument("--no-shell", action="store_true", help="Disable shell tools")
+    parser.add_argument(
+        "--api-key", action="append", metavar="KEY", default=None,
+        help="API key for HTTP clients (repeatable; replaces API_KEYS from the config). "
+        "Note: command-line arguments are visible to other local users, e.g. via ps; "
+        "prefer API_KEYS in a config file on shared machines.",
+    )
+    parser.add_argument("--command-timeout", type=int, metavar="SECONDS", default=None,
+                        help="Shell command timeout (COMMAND_TIMEOUT)")
+    parser.add_argument("--safety-mode", choices=["strict", "relax"], default=None,
+                        help="Shell safety mode (SAFETY_MODE)")
+    parser.add_argument("--public-url", metavar="URL", default=None,
+                        help="Public base URL for patch-preview links (PUBLIC_URL)")
+    parser.add_argument("--in-docker", action="store_true", default=None,
+                        help="The server runs inside a container: run all commands "
+                        "directly (IS_IN_DOCKER)")
     return parser
 
 
@@ -377,13 +406,44 @@ def _load_toml(path: str | Path) -> dict[str, Any]:
     return toml.load(p) if p.is_file() else {}
 
 
+def resolve_config_file(requested: str | None) -> Path | None:
+    """Return the user config file to load, or None to use only the installed default.
+
+    * ``-c FILE`` that exists: use it.
+    * ``-c FILE`` that doesn't exist: warn, and use the installed default config.
+    * no ``-c``: use ``./config.toml`` if it exists, else the installed default.
+    """
+    if requested is not None:
+        path = Path(requested).expanduser()
+        if path.is_file():
+            logger.info("Using config file %s", path.resolve())
+            return path
+        logger.warning(
+            "Config file %s not found; using the installed default config %s",
+            path.resolve(), DEFAULT_CONFIG_PATH,
+        )
+        return None
+    local = Path("config.toml")
+    if local.is_file():
+        logger.info("Using config file %s", local.resolve())
+        return local
+    logger.info("No config file given and no ./config.toml; using the installed default config %s",
+                DEFAULT_CONFIG_PATH)
+    return None
+
+
 def load_settings(argv: Sequence[str] | None = None) -> Settings:
-    """Parse CLI args, merge defaults + config file, and install as SETTINGS."""
+    """Parse CLI args, merge defaults + config file, and install as SETTINGS.
+
+    Precedence: installed default config -> user config file -> CLI flags.
+    """
     global SETTINGS
     args = build_parser().parse_args(argv)
     merged: dict[str, Any] = {}
     merged.update(_load_toml(DEFAULT_CONFIG_PATH))
-    merged.update(_load_toml(args.config))
+    config_file = resolve_config_file(args.config)
+    if config_file is not None:
+        merged.update(_load_toml(config_file))
     SETTINGS = Settings.from_mapping(merged, args)
     return SETTINGS
 
