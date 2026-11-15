@@ -211,16 +211,23 @@ def windows_reinstall_script(pid: int, cmd: list[str], log: str, max_waits: int 
 
 
 def _spawn_detached_windows_reinstall(cmd: list[str]) -> int:
-    """Write the wait-then-reinstall .cmd to a temp dir and launch it detached,
-    so it outlives this process. Returns 0; the caller then exits."""
+    """Write the wait-then-reinstall .cmd to a temp dir and launch it in a
+    hidden console that outlives this process. Returns 0; the caller then exits.
+
+    The helper must run under CREATE_NO_WINDOW, *not* DETACHED_PROCESS: a
+    detached (console-less) process makes every child it spawns -- the
+    ``tasklist``/``ping`` wait loop and ``uv``'s own subprocesses -- allocate a
+    brand-new console window each, so a storm of PowerShell/cmd windows pops up.
+    CREATE_NO_WINDOW instead gives it one hidden console that all descendants
+    inherit, so nothing is shown. (The two flags are mutually exclusive in the
+    Win32 API, so they must never be combined.)"""
     tmp = Path(tempfile.mkdtemp(prefix="umcp-update-"))
     log = tmp / "update.log"
     script = tmp / "reinstall.cmd"
     script.write_text(windows_reinstall_script(os.getpid(), cmd, str(log)))
     flags = (
-        getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-        | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     )
     subprocess.Popen(  # noqa: S603 - fixed argv, no shell
         ["cmd", "/c", str(script)],

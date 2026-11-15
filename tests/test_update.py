@@ -257,3 +257,27 @@ def test_run_update_non_windows_runs_inline(tmp_path, monkeypatch):
     monkeypatch.setattr(update, "find_servers", lambda: [])  # no servers to restart
     assert update.run_update("main") == 0
     assert ran == [["true"]]
+
+
+def test_windows_reinstall_launches_hidden_not_detached(tmp_path, monkeypatch):
+    """Regression: the helper must launch with CREATE_NO_WINDOW (one hidden
+    console inherited by children), never DETACHED_PROCESS -- a console-less
+    process makes every child (tasklist/ping/uv) pop its own window, which was
+    the "many PowerShell windows" storm."""
+    monkeypatch.setattr(update.tempfile, "mkdtemp", lambda *a, **k: str(tmp_path))
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, argv, **kw):
+            captured["argv"] = argv
+            captured["flags"] = kw.get("creationflags", 0)
+
+    monkeypatch.setattr(update.subprocess, "Popen", _FakePopen)
+
+    assert update._spawn_detached_windows_reinstall(["uv", "tool", "install", "x"]) == 0
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NO_WINDOW = 0x08000000
+    assert captured["flags"] & CREATE_NO_WINDOW, "helper must run in a hidden console"
+    assert not (captured["flags"] & DETACHED_PROCESS), "must not be console-less (window storm)"
+    assert captured["argv"][:2] == ["cmd", "/c"]
+    assert (tmp_path / "reinstall.cmd").is_file()
