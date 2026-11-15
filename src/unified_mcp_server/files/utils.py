@@ -368,7 +368,10 @@ async def get_file_info_async(path: Path) -> Dict[str, Any]:
         # Cross-platform: use normalized paths instead of platform-specific paths
         # This fixes the issue where Windows paths (C:\...) cause errors on Linux
         if CONNECTION_TYPE == "local":
-            info["absolute_path"] = normalize_absolute_path(path, PROJECT_DIR)
+            # absolute_path must be absolute: passing base_dir here returned a
+            # path relative to the project (identical to relative_path), so the
+            # field contradicted its name.
+            info["absolute_path"] = normalize_absolute_path(path)
             try:
                 info["relative_path"] = normalize_path(path.relative_to(PROJECT_DIR))
             except ValueError:

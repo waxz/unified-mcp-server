@@ -285,6 +285,23 @@ this server doesn't know are logged and ignored.
   absolute path, a symlink pointing out of the project, a protected file) and
   dangerous/untrusted shell commands (refused with no sandbox and no approval,
   and never executed). *(tests/test_security_guards.py, .github/workflows/ci.yml)*
+- **`apply_patch` preview/confirm no longer corrupts file content.** The
+  dry-run diff was built from `splitlines(keepends=True)` joined with `"\n"`
+  (with `lineterm=""`), doubling every newline -- so the shown diff, and the
+  content the confirm/apply path rebuilt *from that diff*, gained a blank line
+  after every line. Worse, rebuilding from a unified diff dropped every line
+  outside a hunk, so confirming a patch on any non-trivial file truncated it.
+  The dry-run now carries the exact full post-patch content, and the preview
+  writes that verbatim on confirm (never reconstructs it from the diff); the
+  diff itself is generated correctly. *(files/file_patch_tools.py)*
+- **`get_file_info().absolute_path` is now absolute.** It was built relative to
+  the project dir, so it equalled `relative_path` and contradicted its name.
+  *(files/utils.py)*
+- **`patch_file` no longer leaves an orphan `.backup_*`** when no patch matched:
+  the file isn't modified, so the pre-emptive backup is removed. *(files/file_tools.py)*
+- **`read_file` with an out-of-range line window** now returns `total_lines`,
+  the resolved range, and a `warning`, instead of silently looking like an empty
+  file. *(files/file_tools.py)*
 - **Windows commands no longer break with "`&&` is not a valid statement
   separator".** The shell adapter prepended `( cd '<cwd>' && <command> )` --
   bash syntax -- to every command, but on Windows `shell="bash"` maps to
