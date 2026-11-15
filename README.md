@@ -285,6 +285,17 @@ this server doesn't know are logged and ignored.
   absolute path, a symlink pointing out of the project, a protected file) and
   dangerous/untrusted shell commands (refused with no sandbox and no approval,
   and never executed). *(tests/test_security_guards.py, .github/workflows/ci.yml)*
+- **Windows commands no longer break with "`&&` is not a valid statement
+  separator".** The shell adapter prepended `( cd '<cwd>' && <command> )` --
+  bash syntax -- to every command, but on Windows `shell="bash"` maps to
+  PowerShell (and strict mode coerced untrusted commands to it), where `&&`
+  isn't a statement separator, so `execute_command`/`tmux_execute` failed even
+  with `cwd`/`shell` given. The working directory is set by the spawn, so the
+  adapter no longer chains `cd` at all: each shell (cmd / PowerShell / pwsh /
+  wsl / real bash, dispatched by the actual program) just receives the command.
+  Strict mode also no longer forces `bash` on Windows, so an explicit
+  `shell="cmd"` is honored end-to-end. *(shell/platform_adapters/windows.py,
+  shell/approvals.py)*
 - **Windows now uses the same approve/decline gate as Linux.** An untrusted
   command on Windows (no OS sandbox) goes through the approval flow and runs
   once allowed -- it is no longer dead-refused with "run on a Linux host". The

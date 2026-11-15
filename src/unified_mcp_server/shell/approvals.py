@@ -351,7 +351,12 @@ async def authorize(command: str, cwd: str, shell: str, ctx) -> ExecutionRequest
     _validate_string_input(command, "command")
     _validate_string_cwd(cwd, "cwd")
     _validate_shell_name(shell)
-    if settings.SAFETY_MODE == "strict":
+    # Strict mode runs untrusted commands in bash (consistent, no surprising
+    # shell features) -- but only on POSIX, where bash is the safe default. On
+    # Windows "bash" is just an alias for PowerShell and there is no safer
+    # shell, so coercing would silently ignore an explicit shell="cmd" (the
+    # real gate on Windows is approval). Honor the requested shell there.
+    if settings.SAFETY_MODE == "strict" and settings.PLATFORM != "windows":
         shell = "bash"
     if shell not in settings.ALLOWED_SHELLS:
         available = ", ".join(sorted(settings.ALLOWED_SHELLS))
