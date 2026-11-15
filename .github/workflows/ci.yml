@@ -2,6 +2,9 @@ name: ci
 
 # Calls every MCP tool of the unified server (file + shell) through a real
 # MCP client: in-memory, over the stdio console script, and over HTTP with auth.
+# Includes a dedicated security-guards gate that asserts the server refuses
+# dangerous tool calls -- file access outside the working directory and
+# dangerous/untrusted shell commands -- and that the side effect never happens.
 
 on:
   push:
@@ -61,6 +64,11 @@ jobs:
               exit 1
             fi
           done
+
+      # A focused gate: the server must catch dangerous tool calls. Runs on its
+      # own so a regression here is an obvious, separately-named red check.
+      - name: Security guards (dangerous tool calls are refused)
+        run: python -m pytest -v -ra tests/test_security_guards.py
 
       - name: Run MCP tool tests
         run: >

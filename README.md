@@ -272,6 +272,19 @@ this server doesn't know are logged and ignored.
   now one host path space, sandboxes bind the project dir at the same path,
   and a config that still sets the old `work_dir`/`drun` fails at startup
   with a migration message. *(shell/execution_policy.py, shell/sandbox.py)*
+- **`--update` on Windows no longer fails with "Access is denied".** The
+  running `unified-mcp-server.exe` / `python.exe` live inside the uv tool env
+  that `uv tool install --reinstall` wipes, and Windows won't delete in-use
+  files (`os error 5` removing `...\Scripts`). When the updater is running from
+  inside the env it's replacing, the reinstall is now handed to a detached step
+  that waits for this process to exit (unlocking the files) and then installs;
+  restart the server afterwards. *(update.py)*
+- **CI security-guards gate.** A dedicated suite (run as its own CI step)
+  asserts the server *refuses* dangerous tool calls and that the side effect
+  never happens: file access outside the working directory (`..` traversal, an
+  absolute path, a symlink pointing out of the project, a protected file) and
+  dangerous/untrusted shell commands (refused with no sandbox and no approval,
+  and never executed). *(tests/test_security_guards.py, .github/workflows/ci.yml)*
 - **Windows now uses the same approve/decline gate as Linux.** An untrusted
   command on Windows (no OS sandbox) goes through the approval flow and runs
   once allowed -- it is no longer dead-refused with "run on a Linux host". The

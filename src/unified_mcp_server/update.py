@@ -9,6 +9,12 @@ pip). Running HTTP servers of the current user are then sent SIGHUP; each
 one waits a moment (so a reply in flight still goes out) and re-executes
 itself with its original arguments: same PID, same terminal/tmux pane or
 systemd unit, new code.
+
+On Windows the running program's own files are locked, so reinstalling the
+env in place fails with "Access is denied". When the updater is running from
+inside the env being replaced, it hands the reinstall to a detached step that
+waits for this process to exit first, then installs; restart the server
+afterwards (Windows has no in-place SIGHUP restart).
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
 from importlib import metadata
@@ -148,6 +155,92 @@ def _is_http(args: list[str]) -> bool:
     return False
 
 
+# ----------------------------------------------- Windows in-use file workaround
+# On Windows a running .exe and the DLLs it has loaded can't be deleted, and
+# `uv tool install --reinstall` wipes and recreates the whole tool env -- which
+# holds the very unified-mcp-server.exe / python.exe running this update. uv then
+# fails with "Access is denied (os error 5)" removing ...\Scripts. So when we're
+# running from inside the env being replaced, we defer the reinstall to a
+# detached helper that waits for this process to exit (unlocking the files),
+# then runs uv.
+_WIN_WAIT_REINSTALL = """\
+@echo off
+rem Reinstall unified-mcp-server after pid {pid} exits so Windows unlocks its
+rem in-use files. Launched detached by `unified-mcp-server --update`.
+set /a _tries=0
+:waitloop
+tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul
+if errorlevel 1 goto run
+set /a _tries+=1
+if {max} LEQ %_tries% goto run
+ping -n 2 127.0.0.1 >nul
+goto waitloop
+:run
+{cmd} > "{log}" 2>&1
+"""
+
+
+def _running_inside(prefix: str | None) -> bool:
+    """True when this process's own executable/script lives under ``prefix`` --
+    i.e. reinstalling ``prefix`` would try to delete files the OS has locked
+    because we're running them."""
+    if not prefix:
+        return False
+    try:
+        root = Path(prefix).resolve()
+    except (OSError, RuntimeError):
+        return False
+    for candidate in (sys.executable, sys.argv[0] if sys.argv else ""):
+        if not candidate:
+            continue
+        try:
+            if Path(candidate).resolve().is_relative_to(root):
+                return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return False
+
+
+def windows_reinstall_script(pid: int, cmd: list[str], log: str, max_waits: int = 120) -> str:
+    """A .cmd that waits for ``pid`` to exit, then runs ``cmd`` (logging to
+    ``log``). ``max_waits`` bounds the ~1s-per-iteration wait so it never hangs
+    forever if the pid lingers."""
+    return _WIN_WAIT_REINSTALL.format(
+        pid=pid, cmd=subprocess.list2cmdline(cmd), log=log, max=max_waits
+    )
+
+
+def _spawn_detached_windows_reinstall(cmd: list[str]) -> int:
+    """Write the wait-then-reinstall .cmd to a temp dir and launch it detached,
+    so it outlives this process. Returns 0; the caller then exits."""
+    tmp = Path(tempfile.mkdtemp(prefix="umcp-update-"))
+    log = tmp / "update.log"
+    script = tmp / "reinstall.cmd"
+    script.write_text(windows_reinstall_script(os.getpid(), cmd, str(log)))
+    flags = (
+        getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    )
+    subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+        ["cmd", "/c", str(script)],
+        cwd=str(tmp),
+        creationflags=flags,
+        close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(
+        "Windows locks the files of a running program, so the reinstall will finish in a "
+        "detached step the moment this process exits.\n"
+        f"  progress log: {log}\n"
+        "When it's done, start the server again to run the new version.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def run_update(ref: str = "main", restart: bool = True) -> int:
     before = installed_version()
     method = detect_install()
@@ -157,6 +250,11 @@ def run_update(ref: str = "main", restart: bool = True) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(f"Updating {DIST} {before} ({method.kind}) from {REPO_ARCHIVE.format(ref=ref)}", file=sys.stderr)
+    if os.name == "nt" and _running_inside(method.detail):
+        # Can't reinstall over our own in-use files; defer to a detached helper.
+        # (In-place restart is already a no-op on Windows, so there's nothing
+        # more to do here -- the user restarts the server afterwards.)
+        return _spawn_detached_windows_reinstall(cmd)
     done = subprocess.run(cmd)
     if done.returncode != 0:
         print(f"error: update failed (exit {done.returncode}); nothing was restarted", file=sys.stderr)
