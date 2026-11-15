@@ -105,6 +105,7 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `COMMAND_TIMEOUT_MAX` (config only) | largest per-call `timeout` for `execute_command` (default 600) |
 | `--approval-timeout SECONDS` | how long an approval request stays open (`APPROVAL_TIMEOUT`, default 600) |
 | `--approval-wait SECONDS` | how long one tool call waits before returning "pending" (`APPROVAL_WAIT`, default 25) |
+| `--dashboard-token TOKEN` | fixed approvals-dashboard token so its link is stable across restarts (`APPROVALS_DASHBOARD_TOKEN`) |
 | `--update [REF]` | reinstall from GitHub (default `main`), restart running HTTP servers in place, exit; `--no-restart` to skip the restart |
 | `--version` | print the installed version |
 | `--allow-host-tmux-input` | let `tmux_send_keys` type into host sessions (`ALLOW_HOST_TMUX_INPUT`; runs arbitrary commands) |
@@ -231,6 +232,12 @@ this server doesn't know are logged and ignored.
   configured, and raised when no tmux server was running. It now checks the
   sandbox only when one exists, returns `[]` with no server, and drops blank
   names. *(shell/tool_handlers.py)*
+- `read_file`, `patch_file` and `apply_patch` misread text files with an
+  unrecognised extension (`.mjs`, `.cjs`, `.mts`, `.lock`, ...) as binary,
+  because the fallback trusted the host mime database and treated every
+  `application/*` type as binary. File type is now decided from the bytes
+  (NUL byte / UTF-8), which doesn't vary by machine.
+  *(files/utils.py)*
 - Failed commands came back as a Python list repr
   (`['…', '[exit code: 1]']`) with the timeout note twice; they are now plain
   text. A client disconnect raised a validation error instead of returning.

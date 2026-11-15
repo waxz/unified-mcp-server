@@ -298,3 +298,19 @@ async def test_prompt_is_a_single_checkbox_not_a_dropdown(tmp_path):
     assert props["remember_until_restart"].get("default") is False
     assert "enum" not in str(seen["schema"]) and not seen["schema"].get("required")
     assert "echo plain-submit" in seen["message"] and "Submit allows it once" in seen["message"]
+
+
+def test_configured_dashboard_token_is_stable(tmp_path):
+    cfg = tmp_path / "cfg.toml"
+    cfg.write_text('APPROVALS_DASHBOARD_TOKEN = "my-fixed-token-abcdefghij"\n')
+    build_server(load_settings(["-c", str(cfg), "-w", str(_project(tmp_path))]))
+    first = APPROVALS.dashboard_token
+    build_server(load_settings(["-c", str(cfg), "-w", str(_project(tmp_path))]))
+    assert first == APPROVALS.dashboard_token == "my-fixed-token-abcdefghij"
+
+
+def test_short_dashboard_token_rejected(tmp_path):
+    cfg = tmp_path / "cfg.toml"
+    cfg.write_text('APPROVALS_DASHBOARD_TOKEN = "tooshort"\n')
+    with pytest.raises(ValueError):
+        load_settings(["-c", str(cfg), "-w", str(_project(tmp_path))])

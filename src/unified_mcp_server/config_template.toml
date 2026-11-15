@@ -37,6 +37,9 @@ ALLOW_HOST_TMUX_INPUT = false
 APPROVE_UNTRUSTED = true
 APPROVAL_TIMEOUT = 600         # seconds a request stays open before it's denied
 APPROVAL_WAIT = 25             # seconds one tool call waits before saying "pending"
+# Fixed token for the approvals dashboard link, so it stays the same across
+# restarts (otherwise a new random one each start). Treat it like a password.
+# APPROVALS_DASHBOARD_TOKEN = "change-me-to-a-long-random-string"
 
 # Files/folders the file tools must never read, list, search or write.
 # This config file is always protected (it holds API_KEYS).

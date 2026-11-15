@@ -101,11 +101,13 @@ class ApprovalStore:
         self.requests: dict[str, ApprovalRequest] = {}
         self.dashboard_token = secrets.token_urlsafe(24)
 
-    def reset(self) -> None:
-        """Forget everything; a new server gets a new dashboard token."""
+    def reset(self, dashboard_token: str | None = None) -> None:
+        """Forget everything. Without a token, a new server gets a fresh one;
+        with one (APPROVALS_DASHBOARD_TOKEN), the dashboard link is stable
+        across restarts so you can bookmark it."""
         self.approved.clear()
         self.requests.clear()
-        self.dashboard_token = secrets.token_urlsafe(24)
+        self.dashboard_token = dashboard_token or secrets.token_urlsafe(24)
 
     # ------------------------------------------------------------ lookups
     def _expire(self) -> None:
