@@ -58,12 +58,11 @@ def build_windows_shell_command(
     if shell == "wsl" or prog.startswith("wsl"):
         return [shell_path, "--cd", cwd, "bash", "-c", command]
 
-    # cmd.exe. The executor runs a trusted cmd command line *verbatim* through
-    # COMSPEC (see executor._spawn_cmd_verbatim) so Python's list2cmdline can't
-    # re-quote it; this argv is the fallback form. /d skips AutoRun and /s makes
-    # quote handling deterministic (strip exactly the outer pair, rest verbatim)
-    # rather than the /c "is the quoted string an executable?" heuristic that can
-    # leave a stray quote.
+    # cmd.exe: /d /s /c. /d skips AutoRun; /s makes quote handling deterministic
+    # -- cmd strips exactly the outer pair of quotes that list2cmdline adds and
+    # takes the rest verbatim. Plain /c instead uses a heuristic ("is the quoted
+    # string an executable?") that, on a nested/quoted command line such as
+    # `cmd /c echo hi`, leaves a stray trailing quote in the output. /s avoids it.
     if shell == "cmd" or prog in ("cmd", "cmd.exe"):
         return [shell_path, "/d", "/s", "/c", command]
 

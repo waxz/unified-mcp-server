@@ -120,23 +120,6 @@ def _build_shell_command(
     raise RuntimeError(f"Unsupported platform or shell combination: {platform_name} {shell}")
 
 
-def _spawn_cmd_verbatim(settings, request) -> bool:
-    """Whether to run this command line verbatim through COMSPEC (cmd.exe /c)
-    instead of as an argv list.
-
-    On Windows a cmd command passed as an argv element is re-quoted by Python's
-    ``subprocess.list2cmdline`` using MSVCRT rules (e.g. ``echo "a b"`` becomes
-    ``echo \\"a b\\"``), which cmd.exe parses differently and can leave a stray
-    quote in the output. ``create_subprocess_shell`` hands the command line to
-    cmd.exe unmodified, so what the user typed is what cmd runs.
-    """
-    return (
-        getattr(settings, "PLATFORM", None) == "windows"
-        and bool(request.trusted)
-        and request.shell == "cmd"
-    )
-
-
 async def run_shell_command(
     command: str,
     cwd: str,
@@ -220,12 +203,7 @@ async def run_shell_command(
         spawn_kw["start_new_session"] = True
 
     try:
-        if _spawn_cmd_verbatim(config.SETTINGS, request):
-            # cmd.exe receives the command line unmodified (no list2cmdline
-            # MSVCRT re-quoting), so quotes survive exactly as typed.
-            process = await asyncio.create_subprocess_shell(request.command, **spawn_kw)
-        else:
-            process = await asyncio.create_subprocess_exec(*shell_cmd, **spawn_kw)
+        process = await asyncio.create_subprocess_exec(*shell_cmd, **spawn_kw)
     except Exception as exc:
         return ExecutionResult(
             stdout="",
