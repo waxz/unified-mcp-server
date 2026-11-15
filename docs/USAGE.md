@@ -99,9 +99,11 @@ approve `unified-mcp-server --update` and the server restarts itself.
   would be terminated rather than restarted); restart that one yourself once. An editable install from a checkout refuses to update:
   `git pull` there instead.
 
-After a restart: approvals given "until restart" are gone, the dashboard link
-is new (see the server's log), and tmux sessions started by the server keep
-running.
+After a restart: approvals given "until restart" are gone, and tmux sessions
+started by the server keep running. The dashboard link is new each time unless
+you set a fixed `APPROVALS_DASHBOARD_TOKEN` in the config (or `--dashboard-token`),
+in which case the link stays the same and you can bookmark it. Treat that token
+like a password; keep the config out of the folders the file tools can read.
 
 **Running it as a systemd user service** (not yet tried in practice). Save as
 `~/.config/systemd/user/unified-mcp-server.service`:

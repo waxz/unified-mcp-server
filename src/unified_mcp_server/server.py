@@ -114,7 +114,9 @@ def build_server(settings: Settings) -> FastMCP:
         register_shell_tools(_PrefixedRegistrar(app, SHELL_PREFIX) if settings.NAMESPACED else app)
         from .shell.approvals import APPROVALS, register_approval_routes
 
-        APPROVALS.reset()  # approvals last for the life of one server
+        # Approvals last for the life of one server; the dashboard token is
+        # stable only when APPROVALS_DASHBOARD_TOKEN is configured.
+        APPROVALS.reset(settings.APPROVALS_DASHBOARD_TOKEN)
         register_approval_routes(app)
 
     keys = settings.api_keys

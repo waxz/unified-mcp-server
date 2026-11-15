@@ -323,3 +323,55 @@ async def test_file_tools_cannot_touch_the_config_file(tmp_path):
             c.text for c in (await client.call_tool("read_file", {"path": "ok.txt"})).content
         )
     assert "SECRET-KEY-123" in cfg.read_text()  # untouched
+
+
+# ------------------------------------------------- text/binary detection
+@pytest.mark.parametrize(
+    "name,data,expected",
+    [
+        ("gateway.mjs", b"import x from 'y';\n", "text"),   # used to read as binary
+        ("mod.cjs", b"module.exports={}\n", "text"),
+        ("types.mts", b"export const a: number = 1;\n", "text"),
+        ("Cargo.lock", b"[[package]]\n", "text"),
+        ("x.unknownext", "日本語\n".encode("utf-8"), "text"),  # sniffed as UTF-8
+        ("empty.whatever", b"", "text"),
+        ("blob.dat", b"\x00\x01\x02binary\xff", "binary"),  # NUL byte
+        ("pic.png", b"\x89PNG\r\n\x1a\n\x00\x00", "binary"),
+    ],
+)
+def test_get_file_type(tmp_path, name, data, expected):
+    from unified_mcp_server.files import utils
+
+    p = tmp_path / name
+    p.write_bytes(data)
+    assert utils.get_file_type(p) == expected
+
+
+def test_textual_application_mime_not_binary():
+    from unified_mcp_server.files import utils
+
+    assert utils._mime_is_text("application/javascript")
+    assert utils._mime_is_text("application/manifest+json")
+    assert utils._mime_is_text("text/x-python")
+    assert not utils._mime_is_text("application/octet-stream")
+
+
+async def test_read_and_patch_mjs_file(tmp_path):
+    """`.mjs` used to be classified binary: read_file returned base64 and
+    patch_file refused with 'Cannot patch binary file'."""
+    app = _server(tmp_path)
+    project = tmp_path / "p"
+    (project / "app.mjs").write_text("const PORT = 8788;\n")
+    async with Client(app) as client:
+        res = await client.call_tool("read_file", {"path": "app.mjs"})
+        import json
+
+        data = json.loads("".join(c.text for c in res.content))
+        assert data["file_type"] == "text" and data["encoding"] == "utf-8"
+        pr = await client.call_tool(
+            "patch_file",
+            {"path": "app.mjs", "patches": [{"find": "8788", "replace": "9000"}], "backup": False},
+            raise_on_error=False,
+        )
+        assert not pr.is_error
+    assert "9000" in (project / "app.mjs").read_text()

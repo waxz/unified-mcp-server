@@ -96,6 +96,19 @@ TEXT_EXTENSIONS = {
     '.tex', '.bib', '.cls', '.sty',
     '.Dockerfile', '.dockerignore', '.gitignore', '.env',
     '.scl', '.st',
+    # ES modules / TypeScript variants (the host mime database often maps
+    # these to application/*, which used to be misread as binary).
+    '.mjs', '.cjs', '.mts', '.cts', '.jsonc', '.json5', '.jsonl', '.ndjson',
+    '.astro', '.mdx',
+    # Build / config / infra files commonly edited as text.
+    '.lock', '.properties', '.editorconfig', '.gitattributes', '.gitmodules',
+    '.npmrc', '.nvmrc', '.bazel', '.bzl', '.cmake', '.mk', '.make', '.makefile',
+    '.gradle', '.tf', '.tfvars', '.hcl', '.proto', '.graphql', '.gql',
+    '.patch', '.diff', '.po', '.pot', '.srt', '.vtt', '.adoc', '.org', '.rst',
+    # More languages.
+    '.ex', '.exs', '.erl', '.hrl', '.clj', '.cljs', '.cljc', '.edn',
+    '.hs', '.elm', '.dart', '.sol', '.vim', '.el', '.lisp', '.scm',
+    '.f', '.f90', '.f95', '.pas', '.asm', '.s', '.ron', '.v', '.sv',
 }
 
 BINARY_EXTENSIONS = {
@@ -245,22 +258,86 @@ def resolve_path(path: str, work_dir: str | None = None) -> Path:
     return BASE_DIR / path
 
 
+# application/* mime types (and structured suffixes) that are actually text.
+# The default fallback treats every application/* type as binary, which is
+# wrong for these -- and which type the host reports for e.g. `.mjs` depends
+# on its /etc/mime.types, so it varies by machine.
+_TEXTUAL_APPLICATION_TYPES = {
+    "application/javascript", "application/x-javascript", "application/ecmascript",
+    "application/json", "application/manifest+json", "application/xml",
+    "application/xhtml+xml", "application/toml", "application/x-toml",
+    "application/yaml", "application/x-yaml", "application/x-sh",
+    "application/x-shellscript", "application/graphql", "application/sql",
+    "application/x-tex", "application/x-latex", "application/x-perl",
+    "application/x-python", "application/x-ruby", "application/x-httpd-php",
+    "application/x-yaml", "application/csv",
+}
+_TEXT_MIME_SUFFIXES = ("+json", "+xml", "+yaml", "+toml")
+
+
+def _mime_is_text(mime_type: str) -> bool:
+    mime_type = mime_type.lower()
+    if mime_type.startswith("text/"):
+        return True
+    if mime_type in _TEXTUAL_APPLICATION_TYPES:
+        return True
+    return any(mime_type.endswith(suffix) for suffix in _TEXT_MIME_SUFFIXES)
+
+
+def sniff_is_text(path: Path, sample_size: int = 8192) -> Optional[bool]:
+    """Decide text vs binary from the file's own bytes (host-independent).
+
+    Returns True (text), False (binary), or None when the bytes can't be read
+    (a directory, a permission error, or a remote path).
+    """
+    try:
+        with open(path, "rb") as handle:
+            chunk = handle.read(sample_size)
+    except OSError:
+        return None
+    if not chunk:
+        return True  # an empty file is editable as text
+    if b"\x00" in chunk:
+        return False  # a NUL byte means binary
+    try:
+        chunk.decode("utf-8")
+        return True
+    except UnicodeDecodeError as exc:
+        # A multibyte character may have been split at the sample boundary.
+        if exc.start >= len(chunk) - 4:
+            try:
+                chunk[: exc.start].decode("utf-8")
+                return True
+            except UnicodeDecodeError:
+                pass
+    # Not UTF-8: accept legacy text (latin-1 etc.) by its printable ratio.
+    printable = bytes(range(0x20, 0x7F)) + b"\t\n\r\f\v\b\x1b"
+    non_text = sum(byte not in printable for byte in chunk)
+    return (non_text / len(chunk)) < 0.30
+
+
 def get_file_type(path: Path) -> str:
-    """Determine file type"""
+    """Determine whether a file should be handled as text or binary."""
     suffix = path.suffix.lower()
     if suffix in TEXT_EXTENSIONS or path.name in TEXT_EXTENSIONS:
         return "text"
-    elif suffix in BINARY_EXTENSIONS:
+    if suffix in BINARY_EXTENSIONS:
         return "binary"
-    else:
-        # Try to detect using mimetypes
-        mime_type, _ = mimetypes.guess_type(str(path))
-        if mime_type:
-            if mime_type.startswith('text/'):
-                return "text"
-            elif mime_type.startswith(('image/', 'audio/', 'video/', 'application/')):
-                return "binary"
-        return "unknown"
+    # For a local file, the bytes are authoritative and don't depend on the
+    # host's mime database (which is what made `.mjs` read as binary).
+    if CONNECTION_TYPE == "local":
+        sniffed = sniff_is_text(path)
+        if sniffed is not None:
+            return "text" if sniffed else "binary"
+    # Remote path, or bytes unreadable: fall back to mimetypes, but don't treat
+    # textual application/* types as binary.
+    mime_type, _ = mimetypes.guess_type(str(path))
+    if mime_type:
+        if _mime_is_text(mime_type):
+            return "text"
+        if mime_type.startswith(("image/", "audio/", "video/", "font/", "application/")):
+            return "binary"
+    return "unknown"
 
 
 async def get_file_info_async(path: Path) -> Dict[str, Any]:

@@ -139,6 +139,11 @@ class Settings(BaseModel):
     #: Seconds one tool call waits for the answer before returning "pending"
     #: (call again with the same arguments to pick the request back up).
     APPROVAL_WAIT: int = 25
+    #: Fixed token for the approvals dashboard link. Set it so the link stays
+    #: the same across restarts (otherwise a fresh random one each start).
+    #: Treat it like a password; it lives in the config, which the file tools
+    #: can't read. Must be at least 16 characters.
+    APPROVALS_DASHBOARD_TOKEN: str | None = None
     ALLOWED_SHELLS: dict[str, str] = Field(default_factory=dict)
     ALLOWED_DIRECTORIES_HOST: list[str] = Field(default_factory=list)
     ALLOWED_DIRECTORIES_DOCKER: list[str] = Field(default_factory=list)
@@ -198,6 +203,13 @@ class Settings(BaseModel):
     def _approval_wait(cls, value: int) -> int:
         if not 1 <= value <= 600:
             raise ValueError("APPROVAL_WAIT must be between 1 and 600 seconds")
+        return value
+
+    @field_validator("APPROVALS_DASHBOARD_TOKEN")
+    @classmethod
+    def _approvals_dashboard_token(cls, value: str | None) -> str | None:
+        if value is not None and len(value) < 16:
+            raise ValueError("APPROVALS_DASHBOARD_TOKEN must be at least 16 characters")
         return value
 
     @field_validator("SAFETY_MODE")
@@ -392,6 +404,8 @@ class Settings(BaseModel):
             merged["APPROVAL_TIMEOUT"] = args.approval_timeout
         if getattr(args, "approval_wait", None) is not None:
             merged["APPROVAL_WAIT"] = args.approval_wait
+        if getattr(args, "dashboard_token", None):
+            merged["APPROVALS_DASHBOARD_TOKEN"] = args.dashboard_token
 
         # The sandbox's own dirs are always allowed inside the sandbox.
         host_root = merged.get("DOCKER_SANDBOX_HOST_ROOT")
@@ -462,6 +476,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--approval-wait", type=int, metavar="SECONDS", default=None,
                         help="How long one tool call waits for the answer before "
                         "returning 'pending' (APPROVAL_WAIT, default 25)")
+    parser.add_argument("--dashboard-token", metavar="TOKEN", default=None,
+                        help="Fixed approvals-dashboard token so the link stays the same "
+                        "across restarts (APPROVALS_DASHBOARD_TOKEN; >= 16 chars)")
     parser.add_argument(
         "--init-config", nargs="?", const="config.toml", default=None, metavar="PATH",
         help="Write a commented config template with a freshly generated API key to "
