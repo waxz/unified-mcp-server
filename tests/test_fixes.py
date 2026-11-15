@@ -192,7 +192,7 @@ async def test_tmux_tools_on_sandbox_session_without_sandbox_give_clear_error(tm
         res = await client.call_tool(tool, args, raise_on_error=False)
     text = "".join(getattr(c, "text", "") for c in res.content)
     assert res.is_error
-    assert "no sandbox is configured" in text and "NoneType" not in text
+    assert "not reachable" in text and "NoneType" not in text
 
 
 async def test_tmux_tools_reject_bad_session_name(tmp_path):

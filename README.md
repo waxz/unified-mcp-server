@@ -106,7 +106,7 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `--approval-timeout SECONDS` | how long an approval request stays open (`APPROVAL_TIMEOUT`, default 600) |
 | `--approval-wait SECONDS` | how long one tool call waits before returning "pending" (`APPROVAL_WAIT`, default 25) |
 | `--dashboard-token TOKEN` | fixed approvals-dashboard token so its link is stable across restarts (`APPROVALS_DASHBOARD_TOKEN`) |
-| `--sandbox MODE` | how untrusted commands are sandboxed: `none`/`bubblewrap`/`docker`/`drun` (`SANDBOX`) |
+| `--sandbox MODE` | how untrusted commands are sandboxed: `none`/`bubblewrap`/`docker` (`SANDBOX`) |
 | `--sandbox-network allow\|none` | whether a sandboxed command has network (`SANDBOX_NETWORK`) |
 | `--update [REF]` | reinstall from GitHub (default `main`), restart running HTTP servers in place, exit; `--no-restart` to skip the restart |
 | `--version` | print the installed version |
@@ -192,7 +192,10 @@ this server doesn't know are logged and ignored.
   commands instead. Over stdio with a client that can't show prompts there is
   no way to approve, so the command is refused; use `TRUSTED_COMMANDS` there.
 - With a **sandbox** configured (`SANDBOX`), untrusted commands run in it
-  instead of asking for approval. The server builds the sandbox itself:
+  instead of asking for approval. The server builds the sandbox itself, and
+  there is **one filesystem path space**: the sandbox binds the project
+  directory at the *same* path, so a command sees the same paths inside and
+  out (no host/container mapping).
   - `SANDBOX = "bubblewrap"` (Linux; needs the `bubblewrap` package): the
     whole filesystem read-only except the project directory, a private
     `/tmp`, and its own user/pid/ipc/net namespaces. No Docker, no daemon,
@@ -200,15 +203,12 @@ this server doesn't know are logged and ignored.
   - `SANDBOX = "docker"`: a throwaway `docker run --rm` container with only
     the project directory mounted, as the current user, optionally with
     `DOCKER_SANDBOX_CPUS` / `DOCKER_SANDBOX_MEMORY` caps.
-  - `SANDBOX = "drun"`: hand off to a `drun` function you define in
-    `~/.bashrc` (legacy; the server can't verify what it does).
   - `SANDBOX_NETWORK = "none"` cuts network inside the sandbox (default
     `"allow"`).
   The command is passed to `bwrap`/`docker` as a single argument, never
   interpolated into a shell, so there is no outer-shell injection. If the
   chosen sandbox's tool is missing the server refuses to start (fail closed).
-  Unset, `SANDBOX` is `"drun"` when a `[DOCKER_CONFIG.<os>] work_dir` is set
-  (back-compat), else `"none"`.
+  Unset, `SANDBOX` is `"none"` (approval).
 - Set `IS_IN_DOCKER = true` when the server itself runs inside a container:
   every command then runs directly in it.
 - On Windows there is no built-in sandbox (`bubblewrap` is Linux-only); use
@@ -260,6 +260,14 @@ this server doesn't know are logged and ignored.
   undefined external `drun`, and a misconfigured sandbox fails the server at
   startup instead of running commands unsandboxed. *(shell/sandbox.py,
   shell/platform_adapters/windows.py)*
+- The inherited shell sandbox had **two filesystem path spaces** -- a host
+  space and a separate docker-container space (`DOCKER_SANDBOX_WORKDIR`,
+  `ALLOWED_DIRECTORIES_DOCKER`, host->container cwd mapping, `drun` override
+  env) -- so a command ran partly on host paths and partly on mapped
+  container paths. That mixture (and its mapping bugs) is removed: there is
+  now one host path space, sandboxes bind the project dir at the same path,
+  and a config that still sets the old `work_dir`/`drun` fails at startup
+  with a migration message. *(shell/execution_policy.py, shell/sandbox.py)*
 - `read_file`, `patch_file` and `apply_patch` misread text files with an
   unrecognised extension (`.mjs`, `.cjs`, `.mts`, `.lock`, ...) as binary,
   because the fallback trusted the host mime database and treated every

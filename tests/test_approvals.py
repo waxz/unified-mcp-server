@@ -143,7 +143,7 @@ async def test_sandbox_configured_skips_approval(tmp_path):
     from unified_mcp_server.shell.approvals import authorize
 
     _app(tmp_path)
-    config.SETTINGS.DOCKER_SANDBOX_WORKDIR = "/app"
+    config.SETTINGS.SANDBOX = "bubblewrap"  # a sandbox is active -> no approval needed
     assert await authorize("echo hi", ".", "bash", ctx=None) is None
 
 

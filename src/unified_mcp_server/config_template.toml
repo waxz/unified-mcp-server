@@ -31,7 +31,6 @@ IS_IN_DOCKER = false
 #                 namespaces. Linux only; needs the `bubblewrap` package.
 #   "docker"      run it in a throwaway `docker run --rm` container with only
 #                 the project dir mounted. Needs a Docker daemon.
-#   "drun"        hand off to a `drun` function you define in ~/.bashrc (legacy)
 # SANDBOX = "bubblewrap"
 # SANDBOX_NETWORK = "allow"       # or "none" to cut network inside the sandbox
 # SANDBOX_DOCKER_IMAGE = "debian:stable-slim"   # for SANDBOX = "docker"
@@ -85,11 +84,8 @@ allow_directories = ["."]
 # cwd = "."
 # description = "run the test suite"
 
-# ---- sandbox (optional) ---------------------------------------------------------
-# Without host_root, shell tools share the file tools' project directory and
-# follow set_project_directory.
+# ---- sandbox roots (optional) ---------------------------------------------------
+# The sandbox exposes the project directory (above) read-write. To point the
+# shell tools at a different project root than the file tools, set host_root.
 # [DOCKER_CONFIG.linux]
 # host_root = "/home/me/projects/repo"
-# work_dir = "/app/dev/repo"             # path inside the sandbox container
-# allow_directories_host = ["."]
-# allow_directories_docker = [".", "/tmp"]

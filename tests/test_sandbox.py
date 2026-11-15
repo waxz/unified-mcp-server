@@ -64,10 +64,15 @@ def test_mode_default_is_none(tmp_path):
     assert sandbox.effective_mode(s) == sandbox.NONE and not sandbox.is_active(s)
 
 
-def test_mode_drun_back_compat(tmp_path):
+def test_legacy_workdir_is_rejected(tmp_path):
+    # The old container-path sandbox (drun / work_dir) was removed; a config
+    # that still sets it must fail loudly rather than run a host/container mix.
     s = _settings(tmp_path)
-    s.DOCKER_SANDBOX_WORKDIR = "/app"  # old way of turning the sandbox on
-    assert sandbox.effective_mode(s) == sandbox.DRUN and sandbox.is_active(s)
+    s.DOCKER_SANDBOX_WORKDIR = "/app"
+    with pytest.raises(ValueError, match="removed"):
+        sandbox.validate(s)
+    with pytest.raises(ValueError):
+        _settings(tmp_path, 'SANDBOX = "drun"\n')
 
 
 def test_explicit_sandbox_overrides(tmp_path):
@@ -129,15 +134,20 @@ def test_executor_refuses_untrusted_when_no_sandbox(tmp_path):
 
 
 # ------------------------------------------------------ windows adapter fixes
-def test_windows_adapter_no_crash_on_none_roots():
+def test_windows_adapter_takes_no_sandbox_roots():
     from unified_mcp_server.shell.platform_adapters.windows import build_windows_shell_command
 
-    # host_root / work_dir None used to crash with 'NoneType has no attribute replace'.
-    argv = build_windows_shell_command(
-        shell="bash", shell_path="bash", command="echo hi", cwd=".",
-        trusted=False, work_dir=None, host_root=None,
-    )
-    assert argv and "powershell.exe" in argv[0]
+    # The host/container path params that caused the None-crash are gone.
+    import inspect
+
+    params = set(inspect.signature(build_windows_shell_command).parameters)
+    assert "work_dir" not in params and "host_root" not in params
+    # A trusted command builds fine; untrusted bash is refused (no Windows sandbox).
+    assert build_windows_shell_command(
+        shell="cmd", shell_path="cmd.exe", command="dir", cwd=".", trusted=True,
+    )[:2] == ["cmd.exe", "/c"]
+    with pytest.raises(RuntimeError):
+        build_windows_shell_command(shell="bash", shell_path="bash", command="x", cwd=".", trusted=False)
 
 
 def test_windows_refuses_untrusted_cmd_and_powershell():

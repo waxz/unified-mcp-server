@@ -146,27 +146,21 @@ class Settings(BaseModel):
     APPROVALS_DASHBOARD_TOKEN: str | None = None
     ALLOWED_SHELLS: dict[str, str] = Field(default_factory=dict)
     ALLOWED_DIRECTORIES_HOST: list[str] = Field(default_factory=list)
-    ALLOWED_DIRECTORIES_DOCKER: list[str] = Field(default_factory=list)
     DOCKER_CONFIG: Dict[str, Any] = Field(default_factory=dict)
-    DOCKER_SHELL_SERVICE: str | None = None
-    DOCKER_SHELL_ENV_FILE: str | None = None
-    DOCKER_SHELL_COMPOSE_FILE: str | None = None
-    #: How untrusted commands are sandboxed: "none" (approval), "bubblewrap",
-    #: "docker", or "drun". Unset = "drun" if a sandbox work_dir is configured
-    #: (back-compat), else "none". See shell/sandbox.py.
+    #: How untrusted commands are sandboxed: "none" (approval), "bubblewrap"
+    #: or "docker". Unset means "none". See shell/sandbox.py.
     SANDBOX: str | None = None
     #: "allow" (default) or "none" -- whether a sandboxed command has network.
     SANDBOX_NETWORK: str = "allow"
     #: Image for SANDBOX="docker".
     SANDBOX_DOCKER_IMAGE: str | None = None
-    DOCKER_SANDBOX_WORKDIR: str | None = None
+    #: The project root -- the one writable dir a sandbox exposes.
     DOCKER_SANDBOX_HOST_ROOT: str | None = None
+    #: Optional docker cpu/memory caps for SANDBOX="docker".
     DOCKER_SANDBOX_CPUS: str | None = None
     DOCKER_SANDBOX_MEMORY: str | None = None
-    DOCKER_SANDBOX_NETWORK: str | None = None
-    DOCKER_SANDBOX_ENFORCE_CWD_MAP: bool = False
-    UNTRUSTED_USE_DOCKER_SANDBOX: bool = False
-    DOCKER_USE_DRUN_ON_LINUX: bool = True
+    #: Rejected at startup if set: the removed container-path sandbox.
+    DOCKER_SANDBOX_WORKDIR: str | None = None
 
     # ------------------------------------------------------------ validators
     @field_validator("TRANSPORT")
@@ -223,8 +217,8 @@ class Settings(BaseModel):
     @field_validator("SANDBOX")
     @classmethod
     def _sandbox(cls, value: str | None) -> str | None:
-        if value is not None and value not in {"none", "bubblewrap", "docker", "drun"}:
-            raise ValueError("SANDBOX must be 'none', 'bubblewrap', 'docker' or 'drun'")
+        if value is not None and value not in {"none", "bubblewrap", "docker"}:
+            raise ValueError("SANDBOX must be 'none', 'bubblewrap' or 'docker'")
         return value
 
     @field_validator("SANDBOX_NETWORK")
@@ -253,7 +247,7 @@ class Settings(BaseModel):
                 raise ValueError("IS_IN_DOCKER=true requires Linux")
         return value
 
-    @field_validator("ALLOWED_DIRECTORIES_HOST", "ALLOWED_DIRECTORIES_DOCKER")
+    @field_validator("ALLOWED_DIRECTORIES_HOST")
     @classmethod
     def _normalize_dirs(cls, value: list[str] | None) -> list[str]:
         return _normalize_directory_list(value)
@@ -375,17 +369,13 @@ class Settings(BaseModel):
         # Shell tools: [DOCKER_CONFIG.<os>]
         docker = merged.get("DOCKER_CONFIG") or {}
         docker_os = docker.get(platform_name, {})
-        merged.setdefault("DOCKER_SHELL_SERVICE", docker.get("service"))
-        merged.setdefault("DOCKER_SHELL_ENV_FILE", docker.get("env_file"))
         merged.setdefault("DOCKER_SANDBOX_HOST_ROOT", docker_os.get("host_root"))
+        # work_dir is the removed container-path sandbox; keep reading it so the
+        # startup check (shell/sandbox.py) can reject an old config loudly.
         merged.setdefault("DOCKER_SANDBOX_WORKDIR", docker_os.get("work_dir"))
         merged.setdefault(
             "ALLOWED_DIRECTORIES_HOST",
             docker_os.get("allow_directories_host", docker_os.get("allow_direcotories_host")) or [],
-        )
-        merged.setdefault(
-            "ALLOWED_DIRECTORIES_DOCKER",
-            docker_os.get("allow_directories_docker", docker_os.get("allow_direcotories_docker")) or [],
         )
         if not merged.get("ALLOWED_SHELLS"):
             merged["ALLOWED_SHELLS"] = default_shells(platform_name)
@@ -437,9 +427,7 @@ class Settings(BaseModel):
         host_root = merged.get("DOCKER_SANDBOX_HOST_ROOT")
         if host_root and host_root not in merged["ALLOWED_DIRECTORIES_HOST"]:
             merged["ALLOWED_DIRECTORIES_HOST"] = list(merged["ALLOWED_DIRECTORIES_HOST"]) + [host_root]
-        work_dir = merged.get("DOCKER_SANDBOX_WORKDIR")
-        if work_dir and work_dir not in merged["ALLOWED_DIRECTORIES_DOCKER"]:
-            merged["ALLOWED_DIRECTORIES_DOCKER"] = list(merged["ALLOWED_DIRECTORIES_DOCKER"]) + [work_dir]
+
 
         unknown = set(merged) - set(cls.model_fields)
         if unknown:
@@ -505,9 +493,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dashboard-token", metavar="TOKEN", default=None,
                         help="Fixed approvals-dashboard token so the link stays the same "
                         "across restarts (APPROVALS_DASHBOARD_TOKEN; >= 16 chars)")
-    parser.add_argument("--sandbox", choices=["none", "bubblewrap", "docker", "drun"], default=None,
-                        help="How to sandbox untrusted commands (SANDBOX). Default: 'drun' if a "
-                        "sandbox work_dir is set, else 'none' (approval).")
+    parser.add_argument("--sandbox", choices=["none", "bubblewrap", "docker"], default=None,
+                        help="How to sandbox untrusted commands (SANDBOX). Default 'none' (approval).")
     parser.add_argument("--sandbox-network", choices=["allow", "none"], default=None,
                         help="Whether a sandboxed command has network access (SANDBOX_NETWORK)")
     parser.add_argument(

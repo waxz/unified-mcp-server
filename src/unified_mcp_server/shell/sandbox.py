@@ -12,17 +12,16 @@ ways this server can run one safely; which one is used is the **sandbox mode**:
 * ``docker`` -- run it in a throwaway ``docker run --rm`` container with only
   the project directory mounted, as the current user, with optional cpu/memory
   caps. Needs a working Docker daemon.
-* ``drun``   -- the legacy path: hand off to a user-supplied ``drun`` shell
-  function in ``~/.bashrc``. Kept for existing setups; the server can't verify
-  what it does.
 
-The mode is chosen with ``SANDBOX`` / ``--sandbox``. For backward
-compatibility, if ``SANDBOX`` is unset but a sandbox work dir was configured
-(``[DOCKER_CONFIG.<os>] work_dir``), the mode is ``drun``, as before.
+There is ONE filesystem path space: the real host paths. A sandbox binds the
+project directory at the *same* path, so a command sees the same paths inside
+and out -- no host/container path mapping. (The old ``drun`` mode, which ran
+commands at a *different* mapped container path, is gone; mixing host and
+container paths was a hazard.)
 
-Unlike the old ``drun`` path, the bubblewrap and docker argv pass the command
-as a single ``argv`` element to ``bwrap``/``docker`` (never interpolated into
-a shell string), so there is no outer-shell injection surface.
+The bubblewrap and docker argv pass the command as a single ``argv`` element
+to ``bwrap``/``docker`` (never interpolated into a shell string), so there is
+no outer-shell injection surface.
 """
 
 from __future__ import annotations
@@ -38,21 +37,14 @@ logger = logging.getLogger(__name__)
 NONE = "none"
 BUBBLEWRAP = "bubblewrap"
 DOCKER = "docker"
-DRUN = "drun"
-VALID_MODES = {NONE, BUBBLEWRAP, DOCKER, DRUN}
+VALID_MODES = {NONE, BUBBLEWRAP, DOCKER}
 
-# What each mode needs on PATH (drun is a shell function, not a binary).
 _MODE_BINARY = {BUBBLEWRAP: "bwrap", DOCKER: "docker"}
 
 
 def effective_mode(settings: "config.Settings") -> str:
-    """The active sandbox mode, resolving the unset default."""
-    if settings.SANDBOX:
-        return settings.SANDBOX
-    # Back-compat: a configured sandbox work dir used to mean "wrap with drun".
-    if settings.DOCKER_SANDBOX_WORKDIR:
-        return DRUN
-    return NONE
+    """The active sandbox mode (no implicit default; unset means 'none')."""
+    return settings.SANDBOX or NONE
 
 
 def is_active(settings: "config.Settings") -> bool:
@@ -62,7 +54,17 @@ def is_active(settings: "config.Settings") -> bool:
 
 def validate(settings: "config.Settings") -> None:
     """Fail closed at startup: a chosen sandbox whose tool is missing, wrong
-    platform, or lacks a writable root is an error, not a silent fallback."""
+    platform, or lacks a writable root is an error, not a silent fallback. The
+    removed container-path (``drun``/``work_dir``) config is rejected with a
+    migration hint rather than silently ignored."""
+    if settings.DOCKER_SANDBOX_WORKDIR or settings.SANDBOX == "drun":
+        raise ValueError(
+            "The 'drun' sandbox and [DOCKER_CONFIG.<os>] work_dir (a separate "
+            "container path space) have been removed: a command ran partly on host "
+            "paths and partly on mapped container paths, which was unsafe. Use "
+            "SANDBOX='bubblewrap' or 'docker' (both run at the real path), or "
+            "SANDBOX='none' (approval). Remove work_dir from the config."
+        )
     mode = effective_mode(settings)
     if mode == NONE or settings.IS_IN_DOCKER:
         return
