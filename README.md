@@ -106,6 +106,8 @@ unified-mcp-server -c config.toml -t http -H 127.0.0.1 -P 8000 -p /mcp
 | `--approval-timeout SECONDS` | how long an approval request stays open (`APPROVAL_TIMEOUT`, default 600) |
 | `--approval-wait SECONDS` | how long one tool call waits before returning "pending" (`APPROVAL_WAIT`, default 25) |
 | `--dashboard-token TOKEN` | fixed approvals-dashboard token so its link is stable across restarts (`APPROVALS_DASHBOARD_TOKEN`) |
+| `--sandbox MODE` | how untrusted commands are sandboxed: `none`/`bubblewrap`/`docker`/`drun` (`SANDBOX`) |
+| `--sandbox-network allow\|none` | whether a sandboxed command has network (`SANDBOX_NETWORK`) |
 | `--update [REF]` | reinstall from GitHub (default `main`), restart running HTTP servers in place, exit; `--no-restart` to skip the restart |
 | `--version` | print the installed version |
 | `--allow-host-tmux-input` | let `tmux_send_keys` type into host sessions (`ALLOW_HOST_TMUX_INPUT`; runs arbitrary commands) |
@@ -189,11 +191,29 @@ this server doesn't know are logged and ignored.
   still be inside the allowed roots. `--no-approval` refuses untrusted
   commands instead. Over stdio with a client that can't show prompts there is
   no way to approve, so the command is refused; use `TRUSTED_COMMANDS` there.
-- With a sandbox configured (`[DOCKER_CONFIG.<os>] work_dir`), other
-  commands run in it through the external `drun` helper (expected in
-  `~/.bashrc`) instead of asking for approval.
+- With a **sandbox** configured (`SANDBOX`), untrusted commands run in it
+  instead of asking for approval. The server builds the sandbox itself:
+  - `SANDBOX = "bubblewrap"` (Linux; needs the `bubblewrap` package): the
+    whole filesystem read-only except the project directory, a private
+    `/tmp`, and its own user/pid/ipc/net namespaces. No Docker, no daemon,
+    no helper script.
+  - `SANDBOX = "docker"`: a throwaway `docker run --rm` container with only
+    the project directory mounted, as the current user, optionally with
+    `DOCKER_SANDBOX_CPUS` / `DOCKER_SANDBOX_MEMORY` caps.
+  - `SANDBOX = "drun"`: hand off to a `drun` function you define in
+    `~/.bashrc` (legacy; the server can't verify what it does).
+  - `SANDBOX_NETWORK = "none"` cuts network inside the sandbox (default
+    `"allow"`).
+  The command is passed to `bwrap`/`docker` as a single argument, never
+  interpolated into a shell, so there is no outer-shell injection. If the
+  chosen sandbox's tool is missing the server refuses to start (fail closed).
+  Unset, `SANDBOX` is `"drun"` when a `[DOCKER_CONFIG.<os>] work_dir` is set
+  (back-compat), else `"none"`.
 - Set `IS_IN_DOCKER = true` when the server itself runs inside a container:
   every command then runs directly in it.
+- On Windows there is no built-in sandbox (`bubblewrap` is Linux-only); use
+  `SANDBOX = "docker"`, approval, or `TRUSTED_COMMANDS`. An untrusted `cmd` or
+  `powershell` command is refused rather than run unsandboxed.
 - `SAFETY_MODE = "strict"` forces `bash` for untrusted commands.
 - tmux: `tmux_execute` creates host sessions named `native_mcp_<name>`, and
   the other tmux tools act on those directly. Any other session name is
@@ -232,6 +252,14 @@ this server doesn't know are logged and ignored.
   configured, and raised when no tmux server was running. It now checks the
   sandbox only when one exists, returns `[]` with no server, and drops blank
   names. *(shell/tool_handlers.py)*
+- The Windows shell adapter crashed (`'NoneType' has no attribute 'replace'`)
+  when no sandbox root was configured, and in relaxed mode ran an untrusted
+  `cmd`/`powershell` command straight on the host with no sandbox. It now
+  guards the crash and refuses those untrusted commands. The untrusted
+  sandbox is also a real, server-built bubblewrap/docker jail rather than an
+  undefined external `drun`, and a misconfigured sandbox fails the server at
+  startup instead of running commands unsandboxed. *(shell/sandbox.py,
+  shell/platform_adapters/windows.py)*
 - `read_file`, `patch_file` and `apply_patch` misread text files with an
   unrecognised extension (`.mjs`, `.cjs`, `.mts`, `.lock`, ...) as binary,
   because the fallback trusted the host mime database and treated every

@@ -112,6 +112,9 @@ def build_server(settings: Settings) -> FastMCP:
         # Tool names of the two families don't overlap, and FastMCP would
         # reject a duplicate name, so no collision check is needed here.
         register_shell_tools(_PrefixedRegistrar(app, SHELL_PREFIX) if settings.NAMESPACED else app)
+        from .shell import sandbox
+
+        sandbox.validate(settings)  # fail closed if a chosen sandbox can't run
         from .shell.approvals import APPROVALS, register_approval_routes
 
         # Approvals last for the life of one server; the dashboard token is

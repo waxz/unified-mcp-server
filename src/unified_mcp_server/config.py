@@ -151,6 +151,14 @@ class Settings(BaseModel):
     DOCKER_SHELL_SERVICE: str | None = None
     DOCKER_SHELL_ENV_FILE: str | None = None
     DOCKER_SHELL_COMPOSE_FILE: str | None = None
+    #: How untrusted commands are sandboxed: "none" (approval), "bubblewrap",
+    #: "docker", or "drun". Unset = "drun" if a sandbox work_dir is configured
+    #: (back-compat), else "none". See shell/sandbox.py.
+    SANDBOX: str | None = None
+    #: "allow" (default) or "none" -- whether a sandboxed command has network.
+    SANDBOX_NETWORK: str = "allow"
+    #: Image for SANDBOX="docker".
+    SANDBOX_DOCKER_IMAGE: str | None = None
     DOCKER_SANDBOX_WORKDIR: str | None = None
     DOCKER_SANDBOX_HOST_ROOT: str | None = None
     DOCKER_SANDBOX_CPUS: str | None = None
@@ -210,6 +218,20 @@ class Settings(BaseModel):
     def _approvals_dashboard_token(cls, value: str | None) -> str | None:
         if value is not None and len(value) < 16:
             raise ValueError("APPROVALS_DASHBOARD_TOKEN must be at least 16 characters")
+        return value
+
+    @field_validator("SANDBOX")
+    @classmethod
+    def _sandbox(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"none", "bubblewrap", "docker", "drun"}:
+            raise ValueError("SANDBOX must be 'none', 'bubblewrap', 'docker' or 'drun'")
+        return value
+
+    @field_validator("SANDBOX_NETWORK")
+    @classmethod
+    def _sandbox_network(cls, value: str) -> str:
+        if value.lower() not in {"allow", "none", "off", "false"}:
+            raise ValueError("SANDBOX_NETWORK must be 'allow' or 'none'")
         return value
 
     @field_validator("SAFETY_MODE")
@@ -406,6 +428,10 @@ class Settings(BaseModel):
             merged["APPROVAL_WAIT"] = args.approval_wait
         if getattr(args, "dashboard_token", None):
             merged["APPROVALS_DASHBOARD_TOKEN"] = args.dashboard_token
+        if getattr(args, "sandbox", None):
+            merged["SANDBOX"] = args.sandbox
+        if getattr(args, "sandbox_network", None):
+            merged["SANDBOX_NETWORK"] = args.sandbox_network
 
         # The sandbox's own dirs are always allowed inside the sandbox.
         host_root = merged.get("DOCKER_SANDBOX_HOST_ROOT")
@@ -479,6 +505,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dashboard-token", metavar="TOKEN", default=None,
                         help="Fixed approvals-dashboard token so the link stays the same "
                         "across restarts (APPROVALS_DASHBOARD_TOKEN; >= 16 chars)")
+    parser.add_argument("--sandbox", choices=["none", "bubblewrap", "docker", "drun"], default=None,
+                        help="How to sandbox untrusted commands (SANDBOX). Default: 'drun' if a "
+                        "sandbox work_dir is set, else 'none' (approval).")
+    parser.add_argument("--sandbox-network", choices=["allow", "none"], default=None,
+                        help="Whether a sandboxed command has network access (SANDBOX_NETWORK)")
     parser.add_argument(
         "--init-config", nargs="?", const="config.toml", default=None, metavar="PATH",
         help="Write a commented config template with a freshly generated API key to "

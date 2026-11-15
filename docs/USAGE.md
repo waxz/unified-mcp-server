@@ -32,10 +32,17 @@ Three ways, in order of preference:
 |---|---|---|
 | Things you run often (tests, builds, `git` helpers) | `[TRUSTED_COMMANDS.name]` in the config; the model calls it by name | no |
 | One-off commands | any command line; you approve it | yes, once or until restart |
-| Isolation | configure the `drun` sandbox (`[DOCKER_CONFIG.<os>] work_dir`) | no |
+| Isolation (run anything safely) | `SANDBOX = "bubblewrap"` (Linux) or `"docker"` | no |
 
 Trusted commands pin the command line and working directory, so promote a
 command to `TRUSTED_COMMANDS` once you find yourself approving it repeatedly.
+
+**Sandbox.** With `SANDBOX = "bubblewrap"` (Linux, needs the `bubblewrap`
+package) or `"docker"`, any untrusted command runs confined -- the filesystem
+read-only except your project directory -- and no longer needs approval. Add
+`SANDBOX_NETWORK = "none"` to also cut network (stops an untrusted
+`postinstall` script from phoning home). A misconfigured sandbox fails the
+server at startup rather than running commands unsandboxed.
 
 **Timeouts.** `execute_command` stops a command after `COMMAND_TIMEOUT` (30 s)
 unless the call passes `timeout` (up to `COMMAND_TIMEOUT_MAX`, 600 s). Builds

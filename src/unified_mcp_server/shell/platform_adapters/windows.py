@@ -9,9 +9,9 @@ import logging
 from pathlib import PurePosixPath, PureWindowsPath
 
 
-def _ps_single_quoted(value: str) -> str:
-    """Escape a string for PowerShell single-quoted literal context."""
-    return value.replace("'", "''")
+def _ps_single_quoted(value: str | None) -> str:
+    """Escape a string for a PowerShell single-quoted literal (None -> empty)."""
+    return (value or "").replace("'", "''")
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,17 @@ def build_windows_shell_command(
     )
     if shell == "wsl":
         return [shell_path, "--cd", cwd, "bash", "-c", command]
+
+    # cmd / powershell can't be sandboxed here, so an *untrusted* command in one
+    # of them would run straight on the host. Refuse rather than do that; strict
+    # mode already routes untrusted commands to bash, and the approval flow
+    # covers the no-sandbox case.
+    if not trusted and shell in ("cmd", "powershell"):
+        raise RuntimeError(
+            f"Refusing an untrusted '{shell}' command on Windows: it can't be sandboxed. "
+            "Use SAFETY_MODE='strict' (runs untrusted commands in bash), the approval "
+            "flow, or add it to TRUSTED_COMMANDS."
+        )
 
     if shell == "cmd":
         return [shell_path, "/c", command]

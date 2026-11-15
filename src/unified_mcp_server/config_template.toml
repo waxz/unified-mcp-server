@@ -22,9 +22,19 @@ API_KEYS = "__API_KEY__"
 COMMAND_TIMEOUT = 30           # seconds; raise it for long builds
 SAFETY_MODE = "strict"         # "strict" forces bash for untrusted commands
 # true when this server itself runs inside a container: commands run directly.
-# false on a host: only TRUSTED_COMMANDS run directly; anything else needs the
-# `drun` sandbox helper.
 IS_IN_DOCKER = false
+
+# How a command that isn't in TRUSTED_COMMANDS is sandboxed:
+#   "none"        ask you to approve it (the default; see below)
+#   "bubblewrap"  run it in a bubblewrap sandbox: the whole filesystem
+#                 read-only except the project dir, private /tmp, own
+#                 namespaces. Linux only; needs the `bubblewrap` package.
+#   "docker"      run it in a throwaway `docker run --rm` container with only
+#                 the project dir mounted. Needs a Docker daemon.
+#   "drun"        hand off to a `drun` function you define in ~/.bashrc (legacy)
+# SANDBOX = "bubblewrap"
+# SANDBOX_NETWORK = "allow"       # or "none" to cut network inside the sandbox
+# SANDBOX_DOCKER_IMAGE = "debian:stable-slim"   # for SANDBOX = "docker"
 # Let tmux_send_keys type into host (native_mcp_*) tmux sessions. Off by
 # default: a client could then run any command on this machine, bypassing
 # TRUSTED_COMMANDS.

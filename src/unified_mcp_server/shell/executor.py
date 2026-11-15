@@ -125,6 +125,21 @@ def _build_shell_command(
     elif (
         platform_name == "linux"
     ):
+        if not trusted:
+            # Untrusted: a built-in sandbox (bubblewrap/docker) builds the argv
+            # itself and passes the command as a single argv element -- no outer
+            # shell. drun/none fall through to the legacy builder below.
+            from . import sandbox
+
+            argv = sandbox.wrap_posix(shell_path, command, cwd, config.SETTINGS)
+            if argv is not None:
+                return argv
+            if sandbox.effective_mode(config.SETTINGS) == sandbox.NONE:
+                raise RuntimeError(
+                    "Refusing to run an untrusted command with no sandbox and no "
+                    "approval. Add it to TRUSTED_COMMANDS, enable approvals, or set a "
+                    "SANDBOX."
+                )
         logger.debug("build_posix_shell_command for shell=%s", shell)
         return build_posix_shell_command(
             shell_path=shell_path,
@@ -133,7 +148,7 @@ def _build_shell_command(
             trusted=trusted,
             work_dir = config.SETTINGS.DOCKER_SANDBOX_WORKDIR,
             host_root = config.SETTINGS.DOCKER_SANDBOX_HOST_ROOT,
-            
+
         )
     else:
         raise RuntimeError(f"Unsupported platform or shell combination: {platform_name} {shell}") 

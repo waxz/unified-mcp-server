@@ -338,11 +338,13 @@ async def authorize(command: str, cwd: str, shell: str, ctx) -> ExecutionRequest
     Otherwise gets the user's approval and returns a host request, or raises
     ApprovalDenied / ApprovalPending.
     """
+    from . import sandbox
+
     settings = config.SETTINGS
     if (
         not settings.APPROVE_UNTRUSTED
         or settings.IS_IN_DOCKER
-        or settings.DOCKER_SANDBOX_WORKDIR
+        or sandbox.is_active(settings)  # a sandbox will contain it; no approval needed
         or command in settings.TRUSTED_COMMANDS
     ):
         return None
