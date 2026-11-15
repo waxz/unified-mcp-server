@@ -72,6 +72,15 @@ async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
         await asyncio.wait_for(proc.wait(), timeout=2.0)
 
 
+# Shown on every platform when an untrusted command reaches the executor with
+# nothing to contain it -- the same fail-closed rule for Windows and Linux.
+_UNTRUSTED_REFUSED = (
+    "Refusing to run an untrusted command: it wasn't approved and no sandbox "
+    "contained it. Let the user approve it (approve/decline), add it to "
+    "TRUSTED_COMMANDS, or on Linux set a SANDBOX."
+)
+
+
 def _build_shell_command(
     command: str,
     shell: str,
@@ -84,33 +93,31 @@ def _build_shell_command(
     shell_path = config.SETTINGS.ALLOWED_SHELLS[shell]
     platform_name = config.SETTINGS.PLATFORM
 
-    if platform_name == "windows":
-        logger.debug("build_windows_shell_command for shell=%s", shell)
-        return build_windows_shell_command(
-            shell=shell, shell_path=shell_path, command=command, cwd=cwd, trusted=trusted,
-        )
-
-    elif (
-        platform_name == "linux"
-    ):
-        if not trusted:
-            # Untrusted: the sandbox (bubblewrap/docker) builds the argv itself
-            # and runs the command at the real path -- no host/container mapping.
-            # With SANDBOX='none' an untrusted command must have been approved
-            # (so it arrives trusted); if one reaches here, refuse.
+    # Untrusted commands must be *contained* before they reach a shell, and the
+    # rule is the same on every OS. A command the user approved arrives trusted
+    # (approve/decline, see approvals), so it skips this branch. One that is
+    # still untrusted here has only one safe home: a Linux sandbox
+    # (bubblewrap/docker) that builds the argv itself and runs at the real path.
+    # On Windows (no sandbox) there is nothing to contain it -- refuse, exactly
+    # as Linux does with SANDBOX='none'. Fail closed; never run it blind.
+    if not trusted:
+        if platform_name == "linux":
             from . import sandbox
 
             argv = sandbox.wrap_posix(shell_path, command, cwd, config.SETTINGS)
             if argv is not None:
                 return argv
-            raise RuntimeError(
-                "Refusing to run an untrusted command with no sandbox and no "
-                "approval. Add it to TRUSTED_COMMANDS, enable approvals, or set a SANDBOX."
-            )
+        raise RuntimeError(_UNTRUSTED_REFUSED)
+
+    if platform_name == "windows":
+        logger.debug("build_windows_shell_command for shell=%s", shell)
+        return build_windows_shell_command(
+            shell=shell, shell_path=shell_path, command=command, cwd=cwd, trusted=True,
+        )
+    if platform_name == "linux":
         logger.debug("build_posix_shell_command for shell=%s", shell)
         return build_posix_shell_command(shell_path=shell_path, command=command, cwd=cwd)
-    else:
-        raise RuntimeError(f"Unsupported platform or shell combination: {platform_name} {shell}") 
+    raise RuntimeError(f"Unsupported platform or shell combination: {platform_name} {shell}")
 
 
 async def run_shell_command(

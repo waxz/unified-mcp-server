@@ -30,7 +30,10 @@ IS_IN_DOCKER = false
 #                 read-only except the project dir, private /tmp, own
 #                 namespaces. Linux only; needs the `bubblewrap` package.
 #   "docker"      run it in a throwaway `docker run --rm` container with only
-#                 the project dir mounted. Needs a Docker daemon.
+#                 the project dir mounted. Needs a Docker daemon; not on Windows.
+# The sandbox modes need a Linux host. On Windows there is no sandbox, so an
+# untrusted command is gated by the same approve/decline flow as SANDBOX="none"
+# below -- it runs only after you allow it.
 # SANDBOX = "bubblewrap"
 # SANDBOX_NETWORK = "allow"       # or "none" to cut network inside the sandbox
 # SANDBOX_DOCKER_IMAGE = "debian:stable-slim"   # for SANDBOX = "docker"

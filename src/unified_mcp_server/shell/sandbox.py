@@ -22,6 +22,12 @@ container paths was a hazard.)
 The bubblewrap and docker argv pass the command as a single ``argv`` element
 to ``bwrap``/``docker`` (never interpolated into a shell string), so there is
 no outer-shell injection surface.
+
+The sandbox modes need a Linux host (they bind host paths 1:1 and run a POSIX
+shell). On Windows there is no sandbox, so an untrusted command is governed by
+the same **approve/decline** mechanism as on Linux (see ``approvals``): it runs
+only after the user allows it, and is refused (fail closed) otherwise -- never
+run blind.
 """
 
 from __future__ import annotations
@@ -71,7 +77,19 @@ def validate(settings: "config.Settings") -> None:
     if mode not in VALID_MODES:
         raise ValueError(f"SANDBOX must be one of {sorted(VALID_MODES)}, not {mode!r}")
     if mode == BUBBLEWRAP and settings.PLATFORM != "linux":
-        raise ValueError("SANDBOX='bubblewrap' is Linux-only; use 'docker' or 'none' here")
+        raise ValueError(
+            "SANDBOX='bubblewrap' is Linux-only; on this platform use SANDBOX='none' so "
+            "untrusted commands go through approve/decline."
+        )
+    if mode == DOCKER and settings.PLATFORM == "windows":
+        # Our docker sandbox binds host paths 1:1 and runs a POSIX shell inside a
+        # Linux container -- a Windows host can't provide that here. Fail closed to
+        # approvals rather than let an untrusted command slip past both.
+        raise ValueError(
+            "SANDBOX='docker' isn't available on Windows (the sandbox binds host paths "
+            "1:1 into a Linux container with a POSIX shell). Use SANDBOX='none' so "
+            "untrusted commands go through approve/decline."
+        )
     binary = _MODE_BINARY.get(mode)
     if binary and not shutil.which(binary):
         raise ValueError(

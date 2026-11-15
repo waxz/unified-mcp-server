@@ -3,10 +3,12 @@
 """Windows command adapter.
 
 Builds the argv for a *trusted* command (cmd / powershell / wsl / bash), which
-runs directly on the host. Windows has no built-in sandbox (bubblewrap is
-Linux-only), so an *untrusted* command can't be confined here and is refused --
-use the approval flow (which runs it only after you allow it), a Linux host
-with SANDBOX='bubblewrap'/'docker', or TRUSTED_COMMANDS.
+runs directly on the host. Windows has no built-in sandbox (bubblewrap/docker
+need a Linux host), so an untrusted command is governed by the same
+**approve/decline** flow as on Linux: the user approves it first (and it then
+arrives here trusted), or it's refused. This builder therefore only ever sees
+trusted commands; an untrusted one reaching it is a bug upstream, so it fails
+closed rather than run on the host.
 """
 
 from __future__ import annotations
@@ -28,9 +30,9 @@ def build_windows_shell_command(
 
     if not trusted:
         raise RuntimeError(
-            f"Refusing an untrusted '{shell}' command on Windows: it can't be sandboxed "
-            "here. Approve it, add it to TRUSTED_COMMANDS, or run on a Linux host with a "
-            "SANDBOX set."
+            f"Refusing an untrusted '{shell}' command on Windows. Windows has no sandbox, "
+            "so untrusted commands go through approve/decline: let the user approve it, or "
+            "add it to TRUSTED_COMMANDS."
         )
 
     if shell == "wsl":

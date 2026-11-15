@@ -211,9 +211,13 @@ this server doesn't know are logged and ignored.
   Unset, `SANDBOX` is `"none"` (approval).
 - Set `IS_IN_DOCKER = true` when the server itself runs inside a container:
   every command then runs directly in it.
-- On Windows there is no built-in sandbox (`bubblewrap` is Linux-only); use
-  `SANDBOX = "docker"`, approval, or `TRUSTED_COMMANDS`. An untrusted `cmd` or
-  `powershell` command is refused rather than run unsandboxed.
+- On Windows there is no built-in sandbox (`bubblewrap` and `docker` need a
+  Linux host), so an untrusted command is gated by the **same approve/decline
+  flow as on Linux**: it runs only after you allow it (in your client's prompt
+  or on the approvals dashboard), and is refused if approvals are off
+  (`--no-approval`). Add it to `TRUSTED_COMMANDS` to skip the prompt. Setting
+  `SANDBOX = "docker"` on Windows is rejected at startup so a command can't slip
+  past both the sandbox and the approval gate.
 - `SAFETY_MODE = "strict"` forces `bash` for untrusted commands.
 - tmux: `tmux_execute` creates host sessions named `native_mcp_<name>`, and
   the other tmux tools act on those directly. Any other session name is
@@ -268,6 +272,15 @@ this server doesn't know are logged and ignored.
   now one host path space, sandboxes bind the project dir at the same path,
   and a config that still sets the old `work_dir`/`drun` fails at startup
   with a migration message. *(shell/execution_policy.py, shell/sandbox.py)*
+- **Windows now uses the same approve/decline gate as Linux.** An untrusted
+  command on Windows (no OS sandbox) goes through the approval flow and runs
+  once allowed -- it is no longer dead-refused with "run on a Linux host". The
+  fail-closed refusal (approvals off, no sandbox) is now one shared message on
+  both OSes. `SANDBOX = "docker"` on a Windows host is rejected at startup
+  rather than silently skipping approval and then failing to run (it can't bind
+  host paths 1:1 into a Linux container), so an untrusted command can never slip
+  past both gates. *(shell/executor.py, shell/sandbox.py,
+  shell/platform_adapters/windows.py)*
 - `read_file`, `patch_file` and `apply_patch` misread text files with an
   unrecognised extension (`.mjs`, `.cjs`, `.mts`, `.lock`, ...) as binary,
   because the fallback trusted the host mime database and treated every

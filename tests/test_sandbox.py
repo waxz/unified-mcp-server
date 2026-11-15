@@ -1,4 +1,5 @@
-"""Sandboxing of untrusted shell commands (bubblewrap / docker / drun / none)."""
+"""Sandboxing of untrusted shell commands (bubblewrap / docker / none), and the
+approve/decline fallback that gates them where there is no sandbox (Windows)."""
 
 from __future__ import annotations
 
@@ -106,6 +107,16 @@ def test_validate_bubblewrap_non_linux(tmp_path, monkeypatch):
         sandbox.validate(s)
 
 
+def test_validate_docker_rejected_on_windows(tmp_path, monkeypatch):
+    # docker can't bind host paths 1:1 into a Linux container from a Windows host,
+    # so it must fail closed to approve/decline rather than silently skip approval.
+    monkeypatch.setattr(sandbox.shutil, "which", lambda _b: "/usr/bin/docker")
+    s = _settings(tmp_path, 'SANDBOX = "docker"\n')
+    s.PLATFORM = "windows"
+    with pytest.raises(ValueError, match="approve/decline"):
+        sandbox.validate(s)
+
+
 def test_validate_needs_host_root(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox.shutil, "which", lambda _b: "/usr/bin/bwrap")
     s = _settings(tmp_path, 'SANDBOX = "bubblewrap"\n')
@@ -154,14 +165,60 @@ def test_windows_refuses_untrusted_cmd_and_powershell():
     from unified_mcp_server.shell.platform_adapters.windows import build_windows_shell_command
 
     for shell in ("cmd", "powershell"):
-        with pytest.raises(RuntimeError, match="can't be sandboxed"):
+        # An untrusted command only reaches the adapter as a bug (the executor
+        # refuses first); it fails closed and points at approve/decline.
+        with pytest.raises(RuntimeError, match="approve/decline"):
             build_windows_shell_command(
                 shell=shell, shell_path=f"{shell}.exe", command="whoami", cwd=".", trusted=False,
             )
-    # Trusted ones are still allowed.
+    # Trusted ones (e.g. after approval) are still allowed.
     assert build_windows_shell_command(
         shell="cmd", shell_path="cmd.exe", command="dir", cwd=".", trusted=True,
     )[:2] == ["cmd.exe", "/c"]
+
+
+async def test_windows_untrusted_goes_through_approval(tmp_path):
+    """On Windows an untrusted command uses approve/decline, exactly like Linux:
+    once approved it arrives trusted and runs -- it is not dead-refused."""
+    from unified_mcp_server.config import default_shells
+    from unified_mcp_server.shell import approvals
+    from unified_mcp_server.shell.executor import _build_shell_command
+    from unified_mcp_server.shell.execution_policy import _resolve_absolute_cwd
+
+    config.SETTINGS = _settings(tmp_path)
+    config.SETTINGS.PLATFORM = "windows"
+    config.SETTINGS.ALLOWED_SHELLS = default_shells("windows")
+
+    # Simulate the user clicking "Allow": strict mode runs untrusted commands as
+    # bash, so that's the key authorize() will check.
+    host_cwd = _resolve_absolute_cwd(".", config.SETTINGS)
+    approvals.APPROVALS.reset()
+    approvals.APPROVALS.approved[("whoami", "bash", host_cwd)] = 1.0
+
+    # authorize() gates the command through approve/decline and returns a trusted
+    # request -- the same path the Linux version takes.
+    approved = await approvals.authorize("whoami", ".", "cmd", ctx=None)
+    assert approved is not None and approved.trusted
+
+    # The executor then builds a real (trusted) Windows argv; nothing is refused.
+    argv = _build_shell_command(approved.command, approved.shell, approved.cwd, approved.trusted)
+    assert argv[0] == "powershell.exe"  # bash maps to powershell.exe on Windows
+    assert "whoami" in argv[-1]
+    approvals.APPROVALS.reset()
+
+
+def test_executor_refuses_untrusted_on_windows_without_approval(tmp_path):
+    # The fail-closed path is symmetric with Linux: an untrusted command with no
+    # approval and no sandbox is refused with the same message on both OSes.
+    from unified_mcp_server.config import default_shells
+    from unified_mcp_server.shell.executor import _build_shell_command, _UNTRUSTED_REFUSED
+
+    config.SETTINGS = _settings(tmp_path)
+    config.SETTINGS.PLATFORM = "windows"
+    config.SETTINGS.ALLOWED_SHELLS = default_shells("windows")
+    with pytest.raises(RuntimeError, match="Refusing to run an untrusted"):
+        _build_shell_command("whoami", "cmd", str(tmp_path), trusted=False)
+    assert "approve/decline" in _UNTRUSTED_REFUSED
 
 
 # ---------------------------------------- real bubblewrap end-to-end (if present)
