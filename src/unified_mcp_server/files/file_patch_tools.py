@@ -1000,10 +1000,14 @@ async def apply_patch(
             if dry_run:
                 import difflib
 
+                # lineterm="" means the lines must NOT keep their trailing
+                # newline, otherwise joining with "\n" doubles every newline and
+                # a blank line appears after each line (corrupting both the shown
+                # diff and anything rebuilt from it).
                 diff = list(
                     difflib.unified_diff(
-                        original_content.splitlines(keepends=True),
-                        updated_content.splitlines(keepends=True),
+                        original_content.splitlines(),
+                        updated_content.splitlines(),
                         fromfile=f"a/{operation.path}",
                         tofile=f"b/{operation.path}",
                         lineterm="",
@@ -1016,6 +1020,11 @@ async def apply_patch(
                         "path": str(target_path),
                         "success": True,
                         "diff": diff_text,
+                        # The exact, full post-patch content. The preview store
+                        # writes this verbatim on confirm -- never reconstruct it
+                        # from the (context-only) diff, which would drop every
+                        # line outside a hunk.
+                        "new_content": updated_content,
                         **(
                             {"move_to": str(move_target_path)}
                             if move_target_path is not None
@@ -1643,7 +1652,13 @@ def _build_preview_diff_entries(
         diff_text = ""
         if change_type == "update" and change.get("diff"):
             diff_text = change["diff"]
-            new_content = _apply_diff_to_get_new_content(original_content, diff_text)
+            # Prefer the exact full content the dry-run computed. Only fall back
+            # to reconstructing from the diff (lossy for multi-hunk files) when
+            # an older dry-run result didn't carry it.
+            if change.get("new_content") is not None:
+                new_content = change["new_content"]
+            else:
+                new_content = _apply_diff_to_get_new_content(original_content, diff_text)
         elif change_type == "add":
             preview = change.get("preview", "")
             diff_lines = [f"--- /dev/null", f"+++ b/{filename}"]

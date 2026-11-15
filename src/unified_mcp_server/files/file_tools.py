@@ -543,10 +543,31 @@ async def read_file(
         content = await utils.FILE_OPS.read_file(file_path, encoding=encoding)
 
         if start_line is not None or end_line is not None:
-            lines = content.splitlines(keepends=True)
+            all_lines = content.splitlines(keepends=True)
+            total = len(all_lines)
             start_idx = (start_line - 1) if start_line else 0
-            end_idx = end_line if end_line else len(lines)
-            content = "".join(lines[start_idx:end_idx])
+            end_idx = end_line if end_line else total
+            content = "".join(all_lines[start_idx:end_idx])
+            result = {
+                "content": content,
+                "encoding": encoding,
+                "file_type": "text",
+                "total_lines": total,
+                "start_line": start_line if start_line else 1,
+                "end_line": end_line if end_line else total,
+            }
+            # Don't let an out-of-range window look like an empty file.
+            if start_idx >= total or start_idx < 0:
+                result["warning"] = (
+                    f"Requested lines {result['start_line']}-{result['end_line']} are "
+                    f"outside the file, which has {total} line(s); content is empty."
+                )
+            elif end_idx > total:
+                result["warning"] = (
+                    f"Requested end_line {end_line} is past the end of the file "
+                    f"({total} line(s)); returned through line {total}."
+                )
+            return result
 
         return {"content": content, "encoding": encoding, "file_type": "text"}
 
@@ -1314,6 +1335,15 @@ async def patch_file(
                 "patches_applied": patches_applied,
                 "changes": changes,
             }
+
+    # Nothing matched: the file was never modified, so the pre-emptive backup is
+    # just clutter. Remove it so a no-op/failed patch leaves no side effects.
+    if backup_path is not None and patches_applied == 0:
+        try:
+            await utils.FILE_OPS.remove(backup_path)
+        except Exception:
+            pass
+        backup_path = None
 
     return {
         "success": patches_applied > 0,
