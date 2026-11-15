@@ -182,10 +182,16 @@ def resolve_request(command: str, cwd: str, shell: str = "bash") -> ExecutionReq
             f"Shell '{resolved_shell}' is not allowed. Available: {available_shells}"
         )
 
+    # bubblewrap/docker sandboxes run on the host filesystem at the real path
+    # (bind-mounted), so their cwd lives in the HOST path space even though the
+    # command is untrusted. Only drun uses the separate container path space.
+    from . import sandbox
+
+    host_paths = is_trusted or sandbox.effective_mode(settings) in (sandbox.BUBBLEWRAP, sandbox.DOCKER)
     absolute_cwd = _resolve_absolute_cwd(
         cwd=resolved_cwd,
         settings=settings,
-        is_trusted=is_trusted,
+        is_trusted=host_paths,
     )
 
     return ExecutionRequest(

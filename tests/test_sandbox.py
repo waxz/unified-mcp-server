@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -178,18 +179,19 @@ async def test_bubblewrap_confines_filesystem(tmp_path):
     cfg = tmp_path / "c.toml"
     cfg.write_text('SANDBOX = "bubblewrap"\nSANDBOX_NETWORK = "none"\n')
     app = build_server(load_settings(["-c", str(cfg), "-w", str(project)]))
-    outside = tmp_path / "outside_marker"
+    probe = Path(f"/etc/unified_mcp_sandbox_probe_{os.getpid()}")
     async with Client(app) as client:
-        # Writing inside the project dir works.
+        # Writing inside the project dir works (it's bind-mounted read-write).
         ok = await client.call_tool(
             "execute_command", {"command": "echo sandboxed > inside.txt && cat inside.txt", "cwd": "."},
             raise_on_error=False,
         )
-        assert not ok.is_error and "sandboxed" in "".join(c.text for c in ok.content)
-        assert (project / "inside.txt").exists()
-        # Writing outside the project dir (onto the read-only root) fails.
+        assert not ok.is_error, "".join(c.text for c in ok.content)
+        assert "sandboxed" in "".join(c.text for c in ok.content)
+        assert (project / "inside.txt").read_text().strip() == "sandboxed"
+        # Writing onto the read-only root (/etc) fails inside the sandbox.
         bad = await client.call_tool(
-            "execute_command", {"command": f"echo x > {outside}", "cwd": "."}, raise_on_error=False
+            "execute_command", {"command": f"echo x > {probe}", "cwd": "."}, raise_on_error=False
         )
         assert bad.is_error
-    assert not outside.exists()
+    assert not probe.exists()  # nothing escaped to the real host
