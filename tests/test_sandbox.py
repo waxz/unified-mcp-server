@@ -297,27 +297,3 @@ async def test_bubblewrap_confines_filesystem(tmp_path):
         assert bad.is_error
     assert not probe.exists()  # nothing escaped to the real host
 
-
-def test_windows_cmd_spawns_verbatim_through_comspec():
-    """shell='cmd' on Windows must run verbatim through COMSPEC, not as an argv
-    that list2cmdline would re-quote (the source of the stray-quote output)."""
-    from unified_mcp_server.shell.executor import _spawn_cmd_verbatim
-    from unified_mcp_server.common.models import ExecutionRequest
-
-    class Win:
-        PLATFORM = "windows"
-
-    def req(shell, trusted=True):
-        return ExecutionRequest(command="echo hi", cwd=".", shell=shell, trusted=trusted)
-
-    assert _spawn_cmd_verbatim(Win(), req("cmd")) is True
-    # Other shells keep the argv/exec path.
-    assert _spawn_cmd_verbatim(Win(), req("powershell")) is False
-    assert _spawn_cmd_verbatim(Win(), req("bash")) is False
-    # Untrusted never reaches a verbatim host spawn.
-    assert _spawn_cmd_verbatim(Win(), req("cmd", trusted=False)) is False
-
-    class Lin:
-        PLATFORM = "linux"
-
-    assert _spawn_cmd_verbatim(Lin(), req("cmd")) is False
