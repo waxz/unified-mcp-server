@@ -189,22 +189,56 @@ async def test_windows_untrusted_goes_through_approval(tmp_path):
     config.SETTINGS.PLATFORM = "windows"
     config.SETTINGS.ALLOWED_SHELLS = default_shells("windows")
 
-    # Simulate the user clicking "Allow": strict mode runs untrusted commands as
-    # bash, so that's the key authorize() will check.
+    # Simulate the user clicking "Allow". On Windows strict mode does NOT coerce
+    # to bash, so an explicit shell="cmd" is honored end-to-end: that's the key.
     host_cwd = _resolve_absolute_cwd(".", config.SETTINGS)
     approvals.APPROVALS.reset()
-    approvals.APPROVALS.approved[("whoami", "bash", host_cwd)] = 1.0
+    approvals.APPROVALS.approved[("whoami", "cmd", host_cwd)] = 1.0
 
     # authorize() gates the command through approve/decline and returns a trusted
-    # request -- the same path the Linux version takes.
+    # request -- the same path the Linux version takes -- keeping the shell.
     approved = await approvals.authorize("whoami", ".", "cmd", ctx=None)
-    assert approved is not None and approved.trusted
+    assert approved is not None and approved.trusted and approved.shell == "cmd"
 
-    # The executor then builds a real (trusted) Windows argv; nothing is refused.
+    # The executor then builds a real (trusted) Windows argv; nothing is refused,
+    # and it must NOT inject bash-style `cd ... &&`.
     argv = _build_shell_command(approved.command, approved.shell, approved.cwd, approved.trusted)
-    assert argv[0] == "powershell.exe"  # bash maps to powershell.exe on Windows
-    assert "whoami" in argv[-1]
+    assert argv == ["cmd.exe", "/c", "whoami"]
+    assert "&&" not in " ".join(argv)
     approvals.APPROVALS.reset()
+
+
+def test_windows_builds_no_cd_chaining_for_cwd():
+    """Regression: the adapter must not prepend `( cd '<cwd>' && <command> )`.
+    That bash syntax broke PowerShell with "'&&' is not a valid statement
+    separator"; the cwd is set by the spawn, so the command is passed as-is."""
+    from unified_mcp_server.shell.platform_adapters.windows import build_windows_shell_command as b
+
+    cwd = r"C:\Users\axdev\dev\simple-cpp-project"
+
+    def _no_chain(argv):
+        joined = " ".join(argv)
+        assert "&&" not in joined, joined
+        assert not any(a.lstrip().startswith(("cd ", "( cd", "Set-Location")) for a in argv), argv
+
+    # PowerShell, and the Windows alias shell="bash" -> powershell.exe, and pwsh.
+    for shell, path in (("powershell", "powershell.exe"), ("bash", "powershell.exe"), ("pwsh", "pwsh.exe")):
+        argv = b(shell=shell, shell_path=path, command="cmake -S . -B build", cwd=cwd, trusted=True)
+        assert argv[0] == path and "-Command" in argv and argv[-1] == "cmake -S . -B build"
+        _no_chain(argv)
+
+    # cmd.exe: /c, no chaining.
+    assert b(shell="cmd", shell_path="cmd.exe", command="cmake --version", cwd=cwd, trusted=True) == [
+        "cmd.exe", "/c", "cmake --version",
+    ]
+
+    # wsl: the Windows cwd is handed to --cd (not chained), command via bash -c.
+    argv = b(shell="wsl", shell_path="wsl.exe", command="echo ok", cwd=cwd, trusted=True)
+    assert argv == ["wsl.exe", "--cd", cwd, "bash", "-c", "echo ok"]
+
+    # A real bash configured explicitly (Git bash) -> bash -c, still no chaining.
+    argv = b(shell="bash", shell_path=r"C:\Git\bin\bash.exe", command="echo ok", cwd=cwd, trusted=True)
+    assert argv == [r"C:\Git\bin\bash.exe", "-c", "echo ok"]
 
 
 def test_executor_refuses_untrusted_on_windows_without_approval(tmp_path):

@@ -9,11 +9,21 @@ need a Linux host), so an untrusted command is governed by the same
 arrives here trusted), or it's refused. This builder therefore only ever sees
 trusted commands; an untrusted one reaching it is a bug upstream, so it fails
 closed rather than run on the host.
+
+The working directory is set when the process is spawned (the executor passes
+``cwd=``), so this builder never prepends ``cd '<cwd>' && <command>``. That
+injected *bash* syntax into whatever shell was selected, and on PowerShell --
+which is what ``shell="bash"`` maps to on Windows, and what strict mode coerces
+untrusted commands to -- ``&&`` is not a statement separator, so every command
+failed with "The token '&&' is not a valid statement separator in this
+version." Each shell now just receives the command, and the real directory
+comes from the spawn cwd (shell-agnostic, no quoting/escaping of the path).
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +35,14 @@ def build_windows_shell_command(
     cwd: str,
     trusted: bool = False,
 ) -> list[str]:
-    """Build a Windows shell invocation argv for a trusted command."""
-    logger.debug("build_windows_shell_command shell=%s trusted=%s cwd=%s", shell, trusted, cwd)
+    """Build a Windows shell invocation argv for a trusted command.
+
+    Dispatch is by the real program at ``shell_path`` (not just the logical
+    ``shell`` name), so the Windows alias ``shell="bash" -> powershell.exe`` and
+    any explicitly configured shell both launch correctly.
+    """
+    logger.debug("build_windows_shell_command shell=%s path=%s trusted=%s cwd=%s",
+                 shell, shell_path, trusted, cwd)
 
     if not trusted:
         raise RuntimeError(
@@ -35,12 +51,21 @@ def build_windows_shell_command(
             "add it to TRUSTED_COMMANDS."
         )
 
-    if shell == "wsl":
+    prog = Path(shell_path).name.lower()
+
+    # WSL is a separate Linux environment: hand it the Windows cwd to translate
+    # (its own filesystem view differs), then run the command under bash.
+    if shell == "wsl" or prog.startswith("wsl"):
         return [shell_path, "--cd", cwd, "bash", "-c", command]
-    if shell == "cmd":
+
+    # cmd.exe
+    if shell == "cmd" or prog in ("cmd", "cmd.exe"):
         return [shell_path, "/c", command]
-    if shell == "bash":
-        inner = command if cwd in ("", ".") else f"( cd '{cwd}' && {command} )"
-        return [shell_path, "-c", inner]
-    # powershell / pwsh
-    return [shell_path, "-ExecutionPolicy", "Bypass", "-Command", command]
+
+    # PowerShell / pwsh -- also what shell="bash" maps to on Windows (there is
+    # no system bash), and what strict mode coerces untrusted commands to.
+    if prog.startswith(("powershell", "pwsh")):
+        return [shell_path, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
+
+    # A real POSIX shell configured explicitly (e.g. Git bash, busybox): bash -c.
+    return [shell_path, "-c", command]
