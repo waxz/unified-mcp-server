@@ -189,3 +189,71 @@ def test_run_update_never_signals_servers_without_restart_support(tmp_path, monk
         assert "older version" in capsys.readouterr().err
     finally:
         old.kill()
+
+
+# ------------------------------------------------- Windows in-use file workaround
+def test_running_inside_detects_self(tmp_path, monkeypatch):
+    env = tmp_path / "tools" / "unified-mcp-server"
+    (env / "Scripts").mkdir(parents=True)
+    exe = env / "Scripts" / "unified-mcp-server.exe"
+    exe.write_text("")
+    # We're running from inside the env -> reinstalling it would hit locked files.
+    monkeypatch.setattr(update.sys, "executable", str(env / "Scripts" / "python.exe"))
+    monkeypatch.setattr(update.sys, "argv", [str(exe), "--update"])
+    assert update._running_inside(str(env)) is True
+    # A different env (e.g. updating some other install) is not us.
+    assert update._running_inside(str(tmp_path / "other")) is False
+    assert update._running_inside("") is False
+
+
+def test_windows_reinstall_script_waits_then_runs():
+    cmd = ["uv", "tool", "install", "--reinstall",
+           "unified-mcp-server @ https://github.com/waxz/unified-mcp-server/archive/main.zip"]
+    script = update.windows_reinstall_script(4242, cmd, r"C:\tmp\u.log", max_waits=99)
+    assert '"PID eq 4242"' in script and "find \"4242\"" in script  # waits for our pid
+    assert "if 99 LEQ %_tries% goto run" in script                  # bounded wait
+    # The exact uv command, properly Windows-quoted, is what runs, logged to the file.
+    assert subprocess.list2cmdline(cmd) in script
+    assert r'> "C:\tmp\u.log" 2>&1' in script
+
+
+def test_run_update_on_windows_self_defers_to_detached(tmp_path, monkeypatch):
+    """On Windows, when we're running from inside the env being replaced, the
+    reinstall is handed to the detached helper instead of run inline (which
+    would fail with 'Access is denied')."""
+    monkeypatch.setattr(update.os, "name", "nt")
+    monkeypatch.setattr(update, "installed_version", lambda: "0.0.0")
+    monkeypatch.setattr(update, "detect_install",
+                        lambda: update.InstallMethod("uv-tool", str(tmp_path)))
+    monkeypatch.setattr(update, "update_command", lambda m, ref: ["uv", "tool", "install", "x"])
+    monkeypatch.setattr(update, "_running_inside", lambda prefix: True)
+
+    spawned = []
+    monkeypatch.setattr(update, "_spawn_detached_windows_reinstall",
+                        lambda cmd: spawned.append(cmd) or 0)
+    # If it tried to reinstall inline it would call subprocess.run -- forbid that.
+    monkeypatch.setattr(update.subprocess, "run",
+                        lambda *a, **k: pytest.fail("reinstalled inline instead of deferring"))
+
+    assert update.run_update("main") == 0
+    assert spawned == [["uv", "tool", "install", "x"]]
+
+
+def test_run_update_non_windows_runs_inline(tmp_path, monkeypatch):
+    """The detached path is Windows-only; elsewhere the reinstall runs inline."""
+    monkeypatch.setattr(update.os, "name", "posix")
+    monkeypatch.setattr(update, "installed_version", lambda: "0.0.0")
+    monkeypatch.setattr(update, "detect_install",
+                        lambda: update.InstallMethod("uv-tool", str(tmp_path)))
+    monkeypatch.setattr(update, "update_command", lambda m, ref: ["true"])
+    monkeypatch.setattr(update, "_running_inside", lambda prefix: True)
+    monkeypatch.setattr(update, "_spawn_detached_windows_reinstall",
+                        lambda cmd: pytest.fail("used the Windows path on a non-Windows OS"))
+
+    ran = []
+    class _Done:
+        returncode = 0
+    monkeypatch.setattr(update.subprocess, "run", lambda cmd, *a, **k: ran.append(cmd) or _Done())
+    monkeypatch.setattr(update, "find_servers", lambda: [])  # no servers to restart
+    assert update.run_update("main") == 0
+    assert ran == [["true"]]
