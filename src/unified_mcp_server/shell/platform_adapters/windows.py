@@ -58,9 +58,14 @@ def build_windows_shell_command(
     if shell == "wsl" or prog.startswith("wsl"):
         return [shell_path, "--cd", cwd, "bash", "-c", command]
 
-    # cmd.exe
+    # cmd.exe. The executor runs a trusted cmd command line *verbatim* through
+    # COMSPEC (see executor._spawn_cmd_verbatim) so Python's list2cmdline can't
+    # re-quote it; this argv is the fallback form. /d skips AutoRun and /s makes
+    # quote handling deterministic (strip exactly the outer pair, rest verbatim)
+    # rather than the /c "is the quoted string an executable?" heuristic that can
+    # leave a stray quote.
     if shell == "cmd" or prog in ("cmd", "cmd.exe"):
-        return [shell_path, "/c", command]
+        return [shell_path, "/d", "/s", "/c", command]
 
     # PowerShell / pwsh -- also what shell="bash" maps to on Windows (there is
     # no system bash), and what strict mode coerces untrusted commands to.

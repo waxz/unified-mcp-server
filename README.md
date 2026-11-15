@@ -302,6 +302,12 @@ this server doesn't know are logged and ignored.
 - **`read_file` with an out-of-range line window** now returns `total_lines`,
   the resolved range, and a `warning`, instead of silently looking like an empty
   file. *(files/file_tools.py)*
+- **cmd output no longer gets a stray trailing quote.** A `shell="cmd"` command
+  passed as an argv element was re-quoted by Python's `list2cmdline` (MSVCRT
+  rules), which cmd.exe parses differently. A trusted cmd command now runs
+  *verbatim* through COMSPEC (`cmd.exe /c <command>`), so quotes survive exactly
+  as typed; the argv fallback also uses `/d /s /c` for deterministic quote
+  handling. *(shell/executor.py, shell/platform_adapters/windows.py)*
 - **Windows commands no longer break with "`&&` is not a valid statement
   separator".** The shell adapter prepended `( cd '<cwd>' && <command> )` --
   bash syntax -- to every command, but on Windows `shell="bash"` maps to
