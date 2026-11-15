@@ -338,11 +338,13 @@ async def authorize(command: str, cwd: str, shell: str, ctx) -> ExecutionRequest
     Otherwise gets the user's approval and returns a host request, or raises
     ApprovalDenied / ApprovalPending.
     """
+    from . import sandbox
+
     settings = config.SETTINGS
     if (
         not settings.APPROVE_UNTRUSTED
         or settings.IS_IN_DOCKER
-        or settings.DOCKER_SANDBOX_WORKDIR
+        or sandbox.is_active(settings)  # a sandbox will contain it; no approval needed
         or command in settings.TRUSTED_COMMANDS
     ):
         return None
@@ -355,7 +357,7 @@ async def authorize(command: str, cwd: str, shell: str, ctx) -> ExecutionRequest
         available = ", ".join(sorted(settings.ALLOWED_SHELLS))
         raise ValueError(f"Shell '{shell}' is not allowed. Available: {available}")
     # The working directory must still be inside the allowed host roots.
-    host_cwd = _resolve_absolute_cwd(cwd, settings, is_trusted=True)
+    host_cwd = _resolve_absolute_cwd(cwd, settings)
     await APPROVALS.require((command, shell, host_cwd), ctx)
     return ExecutionRequest(command=command, cwd=host_cwd, shell=shell, trusted=True)
 

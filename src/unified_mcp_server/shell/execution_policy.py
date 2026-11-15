@@ -64,85 +64,49 @@ def _normalize_posix_path(path_text: str) -> PurePosixPath:
     return normalize_posix_path(path_text)
 
 
-def _coerce_platform_path(
-    path_text: str,
-    settings: config.Settings,
-    is_trusted: bool = True,
-) -> str:
-    if not is_trusted:
-        if is_windows_style_path(path_text):
-            raise ValueError(f"Invalid path {path_text} in is_trusted:{is_trusted} env")
-        path = _normalize_posix_path(path_text)
-        if path.is_absolute():
-            resolved = path
-            return str(resolved)
-
-        work_dir = settings.DOCKER_SANDBOX_WORKDIR or "."
-        host_dir = _normalize_posix_path(work_dir)
-        resolved = PurePosixPath(host_dir, path)
-        return str(resolved)
-
+# There is ONE path space: the real host filesystem. A sandbox (bubblewrap /
+# docker) binds the project directory at the *same* path, so a command sees the
+# same paths inside and out -- no host/container path mapping, no second
+# allowed-directories list. The project root is DOCKER_SANDBOX_HOST_ROOT (set
+# to the project dir).
+def _coerce_platform_path(path_text: str, settings: config.Settings) -> str:
+    """Resolve a path to an absolute host path (relative to the project root)."""
     if settings.PLATFORM == "windows":
         windows_path = PureWindowsPath(path_text)
         if windows_path.is_absolute():
-            resolved = PureWindowsPath(path_text)
-            return str(resolved)
-
-        host_root = settings.DOCKER_SANDBOX_HOST_ROOT
-        if not host_root:
-            raise ValueError("DOCKER_SANDBOX_HOST_ROOT is required on windows trusted mode")
-        resolved = PureWindowsPath(host_root) / windows_path
-        return str(resolved)
+            return str(windows_path)
+        root = settings.DOCKER_SANDBOX_HOST_ROOT
+        if not root:
+            raise ValueError("No project directory configured (set -w / work_dir)")
+        return str(PureWindowsPath(root) / windows_path)
 
     path = Path(path_text)
     if path.is_absolute():
-        resolved = Path(path_text)
-        return str(resolved)
-
-    host_root = settings.DOCKER_SANDBOX_HOST_ROOT or "."
-    resolved = Path(host_root, path)
-    return str(resolved)
-
-def _allowed_directories(settings: config.Settings, is_trusted: bool) -> list[str]:
-    if is_trusted:
-        return settings.ALLOWED_DIRECTORIES_HOST
-    return settings.ALLOWED_DIRECTORIES_DOCKER
+        return str(path)
+    return str(Path(settings.DOCKER_SANDBOX_HOST_ROOT or ".", path))
 
 
-def _is_allowed_path(path: str, settings: config.Settings, is_trusted: bool) -> bool:
-    allowed_dirs = _allowed_directories(settings, is_trusted)
-
-    if not is_trusted:
-        resolved = _normalize_posix_path(path)
+def _is_allowed_path(path: str, settings: config.Settings) -> bool:
+    allowed_dirs = settings.ALLOWED_DIRECTORIES_HOST
+    if settings.PLATFORM == "windows":
+        resolved = _normalize_windows_path(path)
         for allowed in allowed_dirs:
-            allowed_path = _coerce_platform_path(allowed, settings, is_trusted)
-            allowed_path = _normalize_posix_path(allowed_path)
-            if resolved == allowed_path or allowed_path in resolved.parents:
+            allowed_path = _normalize_windows_path(_coerce_platform_path(allowed, settings))
+            if resolved == allowed_path or resolved.startswith(f"{allowed_path}\\"):
                 return True
-    else:
-        if settings.PLATFORM == "windows":
-            resolved = _normalize_windows_path(path)
-            for allowed in allowed_dirs:
-                allowed_path = _normalize_windows_path(
-                    _coerce_platform_path(allowed, settings, is_trusted)
-                )
-                if resolved == allowed_path or resolved.startswith(f"{allowed_path}\\"):
-                    return True
-            return False
+        return False
 
-        resolved = Path(path).resolve()
-        for allowed in allowed_dirs:
-            allowed_path = _coerce_platform_path(allowed, settings, is_trusted)
-            allowed_path = Path(allowed_path).resolve()
-            if resolved == allowed_path or allowed_path in resolved.parents:
-                return True
+    resolved = Path(path).resolve()
+    for allowed in allowed_dirs:
+        allowed_path = Path(_coerce_platform_path(allowed, settings)).resolve()
+        if resolved == allowed_path or allowed_path in resolved.parents:
+            return True
     return False
 
 
-def _resolve_absolute_cwd(cwd: str, settings: config.Settings, is_trusted: bool) -> str:
-    resolved = _coerce_platform_path(cwd, settings, is_trusted)
-
-    if not _is_allowed_path(resolved, settings, is_trusted):
+def _resolve_absolute_cwd(cwd: str, settings: config.Settings) -> str:
+    resolved = _coerce_platform_path(cwd, settings)
+    if not _is_allowed_path(resolved, settings):
         raise ValueError("Directory not allowed")
     return str(resolved)
 
@@ -182,11 +146,7 @@ def resolve_request(command: str, cwd: str, shell: str = "bash") -> ExecutionReq
             f"Shell '{resolved_shell}' is not allowed. Available: {available_shells}"
         )
 
-    absolute_cwd = _resolve_absolute_cwd(
-        cwd=resolved_cwd,
-        settings=settings,
-        is_trusted=is_trusted,
-    )
+    absolute_cwd = _resolve_absolute_cwd(cwd=resolved_cwd, settings=settings)
 
     return ExecutionRequest(
         command=resolved_command,

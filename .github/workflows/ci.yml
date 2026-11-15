@@ -32,7 +32,7 @@ jobs:
       - name: Install system tools used by the shell/git tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q tmux git
+          sudo apt-get install -y -q tmux git bubblewrap
 
       - name: Set up Python
         uses: actions/setup-python@v6

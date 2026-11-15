@@ -102,9 +102,9 @@ def register_tools(server: FastMCP) -> None:
     def _tmux_session_target(session_name: str) -> tuple[bool, str]:
         """Return (is_trusted, cwd) for running tmux commands on a session.
 
-        ``native_mcp_*`` sessions (created by tmux_execute for trusted commands)
-        live on the host. Any other session lives in the sandbox, so it needs
-        one: without it, upstream passed cwd=None and crashed.
+        Only tmux sessions this server created (``native_mcp_*``, by
+        tmux_execute) are reachable, and they run on the host. Your own tmux
+        sessions aren't addressable.
         """
         settings = config.SETTINGS
         validate_tmux_session_name(session_name)
@@ -113,16 +113,11 @@ def register_tools(server: FastMCP) -> None:
                 raise ValueError("tmux is not installed on the host")
             return True, settings.DOCKER_SANDBOX_HOST_ROOT or os.getcwd()
         if settings.IS_IN_DOCKER:
-            # Inside the sandbox container every command runs directly.
             return False, "."
-        if not settings.DOCKER_SANDBOX_WORKDIR:
-            raise ValueError(
-                f"tmux session '{session_name}' is not a native_mcp_ session, so it is "
-                "treated as a sandbox session, but no sandbox is configured "
-                "([DOCKER_CONFIG.<os>] work_dir). Host sessions are only reachable "
-                "when created by tmux_execute (named native_mcp_<name>)."
-            )
-        return False, settings.DOCKER_SANDBOX_WORKDIR
+        raise ValueError(
+            f"tmux session '{session_name}' is not reachable. Only sessions this server "
+            "created (named native_mcp_<name>, by tmux_execute) can be used."
+        )
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def list_trusted_commands()-> dict:
@@ -379,15 +374,7 @@ def register_tools(server: FastMCP) -> None:
             return [line.split(":", 1)[0] for line in stdout.splitlines() if line.strip()]
 
         sessions: list[str] = []
-        # Sandbox sessions only when a sandbox exists (previously this ran with
-        # cwd=None and crashed when no sandbox work_dir was configured).
-        if settings.DOCKER_SANDBOX_WORKDIR and not settings.IS_IN_DOCKER:
-            result = await run_shell_command(
-                command="tmux ls", cwd=settings.DOCKER_SANDBOX_WORKDIR, shell=shell, is_trusted=False
-            )
-            if result.exit_code == 0:
-                sessions += names(result.stdout)
-        # Host sessions (the trusted ``native_mcp_`` ones).
+        # Host sessions (the ``native_mcp_`` ones this server created).
         if settings.IS_TMUX_INSTALLED:
             result = await run_shell_command(
                 command="tmux ls",

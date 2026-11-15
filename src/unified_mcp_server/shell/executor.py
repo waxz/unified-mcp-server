@@ -72,30 +72,13 @@ async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
         await asyncio.wait_for(proc.wait(), timeout=2.0)
 
 
-async def _ensure_compose_service_running(compose_file: str, service: str, env_file: str) -> None:
-    """Ensure the compose sandbox service is running for persistent exec mode."""
-    process = await asyncio.create_subprocess_exec(
-        "docker",
-        "compose",
-        "--env-file",
-        env_file,
-        "-f",
-        compose_file,
-        "up",
-        "-d",
-        service,
-        env=_docker_compose_env(),
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await process.wait()
-
-
-def _docker_compose_env() -> dict[str, str]:
-    if config.SETTINGS is None:
-        return os.environ.copy()
-    env = os.environ.copy()
-    return env
+# Shown on every platform when an untrusted command reaches the executor with
+# nothing to contain it -- the same fail-closed rule for Windows and Linux.
+_UNTRUSTED_REFUSED = (
+    "Refusing to run an untrusted command: it wasn't approved and no sandbox "
+    "contained it. Let the user approve it (approve/decline), add it to "
+    "TRUSTED_COMMANDS, or on Linux set a SANDBOX."
+)
 
 
 def _build_shell_command(
@@ -110,33 +93,31 @@ def _build_shell_command(
     shell_path = config.SETTINGS.ALLOWED_SHELLS[shell]
     platform_name = config.SETTINGS.PLATFORM
 
+    # Untrusted commands must be *contained* before they reach a shell, and the
+    # rule is the same on every OS. A command the user approved arrives trusted
+    # (approve/decline, see approvals), so it skips this branch. One that is
+    # still untrusted here has only one safe home: a Linux sandbox
+    # (bubblewrap/docker) that builds the argv itself and runs at the real path.
+    # On Windows (no sandbox) there is nothing to contain it -- refuse, exactly
+    # as Linux does with SANDBOX='none'. Fail closed; never run it blind.
+    if not trusted:
+        if platform_name == "linux":
+            from . import sandbox
+
+            argv = sandbox.wrap_posix(shell_path, command, cwd, config.SETTINGS)
+            if argv is not None:
+                return argv
+        raise RuntimeError(_UNTRUSTED_REFUSED)
+
     if platform_name == "windows":
         logger.debug("build_windows_shell_command for shell=%s", shell)
         return build_windows_shell_command(
-            shell=shell,
-            shell_path=shell_path,
-            command=command,
-            cwd=cwd,
-            trusted=trusted,
-            work_dir = config.SETTINGS.DOCKER_SANDBOX_WORKDIR,
-            host_root = config.SETTINGS.DOCKER_SANDBOX_HOST_ROOT,
+            shell=shell, shell_path=shell_path, command=command, cwd=cwd, trusted=True,
         )
-
-    elif (
-        platform_name == "linux"
-    ):
+    if platform_name == "linux":
         logger.debug("build_posix_shell_command for shell=%s", shell)
-        return build_posix_shell_command(
-            shell_path=shell_path,
-            command=command,
-            cwd=cwd,
-            trusted=trusted,
-            work_dir = config.SETTINGS.DOCKER_SANDBOX_WORKDIR,
-            host_root = config.SETTINGS.DOCKER_SANDBOX_HOST_ROOT,
-            
-        )
-    else:
-        raise RuntimeError(f"Unsupported platform or shell combination: {platform_name} {shell}") 
+        return build_posix_shell_command(shell_path=shell_path, command=command, cwd=cwd)
+    raise RuntimeError(f"Unsupported platform or shell combination: {platform_name} {shell}")
 
 
 async def run_shell_command(
@@ -168,18 +149,6 @@ async def run_shell_command(
         request:ExecutionRequest = resolve_request(command=command, cwd=cwd, shell=shell)
 
 
-    # if (
-    #     config.SETTINGS.PLATFORM == "linux"
-    #     and request.shell == "bash"
-    #     and not request.trusted
-    #     and config.SETTINGS.UNTRUSTED_USE_DOCKER_SANDBOX
-    #     and not config.SETTINGS.DOCKER_USE_DRUN_ON_LINUX
-    # ):
-    #     await _ensure_compose_service_running(
-    #         compose_file=os.path.abspath(config.SETTINGS.DOCKER_SHELL_COMPOSE_FILE),
-    #         env_file=os.path.abspath(config.SETTINGS.DOCKER_SHELL_ENV_FILE),
-    #         service=config.SETTINGS.DOCKER_SHELL_SERVICE,
-    #     )
     logger.debug("request: %s", request)
     shell_cmd = _build_shell_command(
         request.command,
@@ -195,7 +164,7 @@ async def run_shell_command(
         else:
             raise ValueError(f"Directory {request.cwd} does not exist")
     else:
-        spawn_cwd = config.SETTINGS.DOCKER_SANDBOX_HOST_ROOT
+        spawn_cwd = config.SETTINGS.DOCKER_SANDBOX_HOST_ROOT  # the project root
 
     
     logger.debug("spawn_cwd: %s", spawn_cwd)
@@ -207,12 +176,7 @@ async def run_shell_command(
         cwd=spawn_cwd,
     )
 
-    if (
-        config.SETTINGS.PLATFORM == "linux"
-    ):
-        spawn_kw_env = _docker_compose_env()
-    else:
-        spawn_kw_env = os.environ.copy()
+    spawn_kw_env = os.environ.copy()
     
     
 
