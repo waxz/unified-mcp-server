@@ -156,7 +156,7 @@ def test_windows_adapter_takes_no_sandbox_roots():
     # A trusted command builds fine; untrusted bash is refused (no Windows sandbox).
     assert build_windows_shell_command(
         shell="cmd", shell_path="cmd.exe", command="dir", cwd=".", trusted=True,
-    )[:2] == ["cmd.exe", "/c"]
+    )[:4] == ["cmd.exe", "/d", "/s", "/c"]
     with pytest.raises(RuntimeError):
         build_windows_shell_command(shell="bash", shell_path="bash", command="x", cwd=".", trusted=False)
 
@@ -174,7 +174,7 @@ def test_windows_refuses_untrusted_cmd_and_powershell():
     # Trusted ones (e.g. after approval) are still allowed.
     assert build_windows_shell_command(
         shell="cmd", shell_path="cmd.exe", command="dir", cwd=".", trusted=True,
-    )[:2] == ["cmd.exe", "/c"]
+    )[:4] == ["cmd.exe", "/d", "/s", "/c"]
 
 
 async def test_windows_untrusted_goes_through_approval(tmp_path):
@@ -203,7 +203,7 @@ async def test_windows_untrusted_goes_through_approval(tmp_path):
     # The executor then builds a real (trusted) Windows argv; nothing is refused,
     # and it must NOT inject bash-style `cd ... &&`.
     argv = _build_shell_command(approved.command, approved.shell, approved.cwd, approved.trusted)
-    assert argv == ["cmd.exe", "/c", "whoami"]
+    assert argv == ["cmd.exe", "/d", "/s", "/c", "whoami"]
     assert "&&" not in " ".join(argv)
     approvals.APPROVALS.reset()
 
@@ -229,7 +229,7 @@ def test_windows_builds_no_cd_chaining_for_cwd():
 
     # cmd.exe: /c, no chaining.
     assert b(shell="cmd", shell_path="cmd.exe", command="cmake --version", cwd=cwd, trusted=True) == [
-        "cmd.exe", "/c", "cmake --version",
+        "cmd.exe", "/d", "/s", "/c", "cmake --version",
     ]
 
     # wsl: the Windows cwd is handed to --cd (not chained), command via bash -c.
@@ -296,3 +296,28 @@ async def test_bubblewrap_confines_filesystem(tmp_path):
         )
         assert bad.is_error
     assert not probe.exists()  # nothing escaped to the real host
+
+
+def test_windows_cmd_spawns_verbatim_through_comspec():
+    """shell='cmd' on Windows must run verbatim through COMSPEC, not as an argv
+    that list2cmdline would re-quote (the source of the stray-quote output)."""
+    from unified_mcp_server.shell.executor import _spawn_cmd_verbatim
+    from unified_mcp_server.common.models import ExecutionRequest
+
+    class Win:
+        PLATFORM = "windows"
+
+    def req(shell, trusted=True):
+        return ExecutionRequest(command="echo hi", cwd=".", shell=shell, trusted=trusted)
+
+    assert _spawn_cmd_verbatim(Win(), req("cmd")) is True
+    # Other shells keep the argv/exec path.
+    assert _spawn_cmd_verbatim(Win(), req("powershell")) is False
+    assert _spawn_cmd_verbatim(Win(), req("bash")) is False
+    # Untrusted never reaches a verbatim host spawn.
+    assert _spawn_cmd_verbatim(Win(), req("cmd", trusted=False)) is False
+
+    class Lin:
+        PLATFORM = "linux"
+
+    assert _spawn_cmd_verbatim(Lin(), req("cmd")) is False
