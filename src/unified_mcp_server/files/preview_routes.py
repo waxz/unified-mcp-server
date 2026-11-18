@@ -20,9 +20,12 @@ from .patch_preview_store import (
 
 
 def _preview_file_diff(original: str, new: str, path: str) -> str:
+    # lineterm="" requires lines WITHOUT their trailing newline; keepends=True
+    # would leave each line ending in "\n" and "\n".join then doubles every
+    # newline (a blank line after each line) in the rendered diff.
     diff = difflib.unified_diff(
-        original.splitlines(keepends=True),
-        new.splitlines(keepends=True),
+        original.splitlines(),
+        new.splitlines(),
         fromfile=f"a/{path}",
         tofile=f"b/{path}",
         lineterm="",
