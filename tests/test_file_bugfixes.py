@@ -143,3 +143,14 @@ async def test_read_file_in_range_window_has_no_warning(client):
     await _data(c, "write_file", {"path": "a.txt", "content": "l1\nl2\nl3\n"})
     res = await _data(c, "read_file", {"path": "a.txt", "start_line": 2, "end_line": 3})
     assert res["content"] == "l2\nl3\n" and "warning" not in res
+
+
+def test_http_preview_diff_has_no_doubled_newlines():
+    # Same anti-pattern as the apply_patch corruption, in the HTTP preview page:
+    # unified_diff(keepends=True) + "\n".join doubled every newline. Display-only
+    # but platform-independent (affects Linux too).
+    from unified_mcp_server.files.preview_routes import _preview_file_diff
+
+    diff = _preview_file_diff("alpha\nbeta\ngamma\n", "ALPHA\nbeta\ngamma\n", "f.txt")
+    assert "\n\n" not in diff.rstrip("\n")
+    assert "-alpha" in diff and "+ALPHA" in diff and " beta" in diff
